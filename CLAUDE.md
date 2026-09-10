@@ -80,7 +80,7 @@ See `docs/state.md` for anything more recent than this line.
 | Market data | `C:\trading\data` — outside the repo, deliberately |
 | Logs and state | `C:\trading\runtime` — outside the repo, deliberately |
 | Private strategies | `C:\trading\private`, installed as a package, loaded by import string from config |
-| Venue | Proprietary firm evaluation on MT5. FundedNext default profile, FTMO second |
+| Venue | Proprietary firm evaluation on MT5. Both FundedNext and FTMO profiles built; firm choice deferred to phase 7. FundedNext bars automation at $50k and above |
 
 `data\` and `runtime\` sit outside the repository so that `git clean -xdf` cannot destroy historical data or persisted risk state.
 

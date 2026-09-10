@@ -64,7 +64,7 @@ What was changed, and why:
 | Primary venue | MT5 | Retail standard, so others can use the result; already familiar |
 | Second venue | OANDA v20 | Venue independence, and a test of whether the `Broker` abstraction is real |
 | Account type | Proprietary firm evaluation, on MT5 | Externally imposed loss limits become a first-class part of the risk layer — spec §6.5 |
-| Firms | FundedNext default profile, FTMO second | Operator holds accounts with both. Two profiles is the test that the constraint model is general |
+| Firms | Both profiles built; choice deferred to phase 7 | FundedNext bars automation at $50k and above; FTMO permits it at every size. Two profiles is also the test that the constraint model is general |
 | Instruments | NAS100, US500, EURUSD, XAUUSD, XAGUSD | Correlated exposure is real here, making the correlation check load-bearing |
 | Research tooling | TradingView / Pine, research only | Fast for prototyping; hard boundary before production |
 | Language | Python | Ecosystem for testing and analysis, which MQL5 lacks |
@@ -84,9 +84,10 @@ What was changed, and why:
 3. Bar interval — not yet chosen.
 4. Symbol specifications and naming from `symbol_info()`.
 5. If OANDA is pursued later: entity confirmation (UAE routes to OANDA Global Markets, BVI) and whether v20 is exposed on live accounts of that entity.
-6. Whether FundedNext offers MT5 for the plan held, and whether it permits a Python process driving the operator's own terminal. FTMO's position on automation is published and permissive; FundedNext's is unverified. A negative answer on either makes the venue unusable regardless of its rule structure.
-7. Exact rule figures for both firms, from their own rulebooks rather than comparison sites — which were found to contradict each other and the firms' own pages on nearly every number, including profit targets and whether the daily limit is measured on equity or balance.
-8. Eligibility from the UAE for both firms.
+6. ~~Whether FundedNext offers MT5 and permits a Python process driving the terminal.~~ **Answered 2026-09-10.** Both firms offer MT5. Both treat a Python script as automated trading. But FundedNext permits it only on accounts **below $50,000**, requires a non-refundable add-on fee, and prohibits EAs incorporating third-party messaging applications. FTMO permits automation at every size to $200,000 at no extra cost. This reopened the venue choice rather than closing it — see spec §10, "On the venue choice".
+7. Reset time and timezone of the accounting day, and what the daily limit anchors to, for both firms. FundedNext confirmed by support that both open and closed positions count toward both limits — the limits are therefore measured on equity. The anchor and reset boundary remain unconfirmed.
+8. Exact rule figures for both firms, from their own rulebooks rather than comparison sites — which were found to contradict each other and the firms' own pages on nearly every number, including profit targets and whether the daily limit is measured on equity or balance.
+9. ~~Eligibility from the UAE for both firms.~~ **Answered** — the operator holds accounts with both.
 
 ## 7. Deliberately deferred
 

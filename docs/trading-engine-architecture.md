@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3 — adds external account constraints (§6.5) for proprietary-firm venues; prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
+**Version:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
+**Previous:** 3 — external account constraints (§6.5); prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
 **Previous:** 2 — MT5 primary adapter, intervention rules, decision log, TradingView boundary
 **Purpose:** hand to Claude Code as the source of truth for a phased build
 
@@ -415,6 +416,10 @@ This section specifies controls over those decisions. It is part of the risk lay
 **Category 1 — operational controls. Free, immediate, no confirmation.**
 Kill switch, flatten all, pause new entries, disable an instrument, reduce size, tighten any limit. One action, available from a phone, no dialogs. There is never a case where the operator should be slowed down while trying to reduce exposure.
 
+*Implementation constraint.* The authoritative control is a local file that the engine polls every bar, so that reducing exposure never depends on a third-party service being reachable. **Whatever writes that file must not be a third-party messaging integration:** FundedNext prohibits EAs incorporating applications such as Telegram or WhatsApp (§10 item 5b), and a control channel that breaches the venue's rules is not a control. A local dashboard on the production host, or a remote desktop session, satisfies the requirement without the exposure.
+
+*Venue interaction.* Some firms prohibit mixing automated and manual execution on one account. Where that applies, closing a position through the terminal interface is a manual trade and may constitute a breach — so every intervention, including flattening, must go through the engine. The control plane therefore stops being a convenience and becomes the only permitted route to intervene, which is why the file mechanism above belongs in phase 7 rather than waiting for the dashboard in phase 9.
+
 **Category 2 — loosening changes. Deliberately expensive.**
 Raising a drawdown limit, increasing position size or leverage, widening a spread ceiling, disabling a filter, shortening a cooldown. Four mechanisms apply:
 
@@ -635,7 +640,7 @@ Phases 2 and 3 look trivial and are the most valuable in the whole build. If `Al
 |---|---|---|
 | Broker / venue | **MT5 first**, OANDA second | See Appendices A and B |
 | Account type | **Proprietary firm evaluation**, MT5 platform | Externally imposed loss limits — see §6.5. Operator holds accounts with FundedNext and FTMO |
-| Constraint profile | **FundedNext Stellar 2-Step** as the default profile; FTMO 2-Step as the second | Static floor is the simpler default; trailing implemented at the same time (§6.5.2) |
+| Constraint profile | **Both `fundednext_stellar_2step` and `ftmo_2step` implemented.** Which is used at phase 7 is deliberately deferred | See "On the venue choice" below. Static and trailing floor modes are both built regardless (§6.5.2) |
 | Research tooling | TradingView / Pine, research only | See §12 |
 | Instruments | `NAS100_USD`, `SPX500_USD`, `EUR_USD`, `XAU_USD`, `XAG_USD` | Multi-instrument from day one — sizer needs correlation checks |
 | Language | Python | Assumed throughout; architecture does not require it |
@@ -643,6 +648,10 @@ Phases 2 and 3 look trivial and are the most valuable in the whole build. If `Al
 | Regime model | Deferred | It's a `FeatureSet`; don't build one before a strategy needs it |
 
 **On multi-instrument.** Indices, FX and metals in one portfolio means correlated exposure is real, not theoretical — gold and silver move together, and both trade against the dollar alongside EUR/USD. The `RiskGate` correlation check (§6.1) is therefore load-bearing rather than nice-to-have. Compute rolling correlation from the feature pipeline and cap aggregate exposure across correlated groups, not just per instrument.
+
+**On the venue choice.** The venue is a proprietary firm on MT5, but *which* firm is deliberately open until phase 7. FundedNext permits this engine only below $50,000 and charges a non-refundable add-on fee; FTMO permits automation at every size up to $200,000 at no additional cost, and its published position on mechanism is explicitly agnostic. Against that, FundedNext's static maximum-loss floor is marginally simpler to model than FTMO's end-of-day trailing floor — but both floor modes are implemented regardless (§6.5.2), so this is not a differentiator in engineering terms.
+
+Deferring the choice costs nothing: phases 0 through 6 touch no broker. Firm rules also change on a shorter cycle than this build, so a decision made now would need re-verifying anyway. Re-read both rulebooks at phase 7 and choose then.
 
 **On broker ordering.** MT5 comes first for two reasons. It is the retail standard, so a framework built on it is usable by others without modification — which matters given the intent to help other people build their own version. And it is already familiar, which matters more than API elegance when momentum is the scarce resource. OANDA follows as the second adapter, where its value is as much architectural as practical: see Appendix B.
 
@@ -659,13 +668,16 @@ Items 1, 2 and 4 are answered from a free-trial or existing evaluation account o
 
 Third-party comparison sites disagree with each other and with the firms' own pages on nearly every figure. Use primary sources only, and record the date and URL per §6.5.6.
 
-5. **Does the firm permit external algorithmic execution** — a Python process driving the operator's own terminal, as distinct from an MQL5 Expert Advisor. FTMO's published position is that the mechanism is irrelevant provided behaviour complies. Unverified for FundedNext.
-6. **Does the firm offer MT5** for the account type held. If not, the venue is unusable regardless of its other properties.
+5. **~~Does the firm permit external algorithmic execution~~ — ANSWERED, both firms.** FTMO's published position is that the mechanism is irrelevant provided behaviour complies. FundedNext's help centre states that a Python script executing trades is treated as automated trading and falls under its EA rules — *subject to the account-size ceiling in item 5a*.
+5a. **FundedNext imposes a $50,000 automation ceiling — VERIFIED 2026-09-10.** EAs, bots and automated tools are permitted on MT4/MT5 only for accounts **below $50,000**. Accounts of $50,000 and above must be traded fully manually, in both Challenge and funded stages. The restriction extends to tools that place no trades and only modify stop loss, take profit or lot size. It also applies to cTrader and Match-Trader at any size. Source: `help.fundednext.com/en/articles/8020763`. **Consequence: on FundedNext this engine may only run on an account below $50,000, and the EA add-on fee is required and non-refundable.** FTMO has no equivalent size ceiling.
+5b. **FundedNext prohibits EAs incorporating third-party applications such as Telegram or WhatsApp — VERIFIED 2026-09-10.** Constrains the §6.4 control plane; see the note there. FTMO's position on this is unverified.
+5c. **FundedNext caps allocation at $300,000 per strategy** across accounts, and bans EAs designed specifically to pass prop-firm challenges, with a published named list.
+6. **~~Does the firm offer MT5~~ — ANSWERED.** Both firms offer MT5.
 7. **Exact rule figures for the specific plan held**: daily loss percentage, whether measured on equity or closed balance, its anchor, maximum loss percentage, floor mode, and the accounting-day reset time and timezone. These populate the §6.5.3 profile.
 8. **Profit targets per phase.** Reported inconsistently across sources for both firms; confirm before selecting a venue on that basis.
 9. **Prohibited practices and any news-trading restriction**, and whether a time-based filter is therefore required in strategy code.
 10. **Request-rate ceiling.** FTMO publishes a hyperactivity threshold of 2,000 server requests per day for order operations. A bar-close system on five instruments is far below this, but the polling loop in Appendix A.7 should be designed against a stated budget rather than assumed safe.
-11. **Eligibility from the operator's jurisdiction (UAE).** Firms maintain restricted-country lists that change.
+11. **~~Eligibility from the operator's jurisdiction (UAE)~~ — ANSWERED.** The operator holds live accounts with both firms.
 
 ---
 

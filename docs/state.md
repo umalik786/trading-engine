@@ -17,6 +17,11 @@
 - Do not buy an evaluation before phase 6. Phases 0–6 touch no broker, and knowing where
   a strategy sits against the random-entry baseline is cheaper than paying to find out.
 - Spec now at version 3.1.
+- **Current lean is FTMO**, on the strength of no size ceiling, no add-on fee, and a
+  published position on automation that is explicitly mechanism-agnostic. Recorded as
+  a lean, not a decision: §10 defers the choice to phase 7, and both profiles are built
+  regardless. Settling it early would create a pull toward not building the second
+  profile, which is how a general abstraction quietly stops being general.
 
 ## Verified this session, from primary sources
 
@@ -54,10 +59,32 @@
   `symbol_info` values, whether the order `comment` field survives, bar interval.
   Needs a running terminal and a throwaway script. Depth is the one that matters —
   it decides whether meaningful walk-forward validation is possible at all.
+  **Partial progress — see below.**
+
+## Partial findings — FTMO M15 depth
+
+Measured by scrolling charts in the terminal, not by script. Indicative only.
+
+- **Max bars in chart** is already set to unlimited on the terminal (Tools → Options →
+  Charts). This setting silently caps history depth and is the most common false
+  negative when checking a broker's data.
+- EURUSD and XAUUSD both scroll back past 2023 and were still loading when stopped.
+  Two-plus years of M15 is enough for the phase 5 and 6 comparisons to say something,
+  though not generously.
+- An earlier reading of **February 2024 was wrong** — that was the download still in
+  progress, not the server's limit. Taken at face value it would have led to a bar
+  interval and walk-forward window sized for a fraction of the real dataset.
+- **Chart scrolling is not a measurement.** Use `copy_rates_range` from 2005 and read
+  the earliest bar actually returned. Do not record a depth figure obtained any other
+  way.
+- Not yet checked: NAS100, US500, XAGUSD. Exact symbol names on FTMO's server also
+  still unrecorded (§10 item 4).
 
 ## Next
 
-1. MT5 verification session — the four §10 items above.
+1. MT5 verification session — the four §10 items above. First real code in the project;
+   throwaway, not engine code. Requires `MetaTrader5` as an optional Windows-only
+   dependency, the terminal running and logged in.
 2. Phase 0: repo skeleton, core types, config loading, decision log schema.
    Exit criterion: config round-trips; manifest records commit and config hash;
    a decision log entry captures full context.

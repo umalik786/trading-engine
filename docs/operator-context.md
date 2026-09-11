@@ -25,6 +25,8 @@ That is a deliberate premise of the project, not a problem to be worked around: 
 
 **Anticipate the failure.** The common Windows traps — PATH not set, Microsoft Store Python stub, Git opening Vim, OneDrive redirecting folders — should be flagged before they happen, not diagnosed afterwards.
 
+**Be concise.** This was raised explicitly on 2026-09-11. Keep the substance — reasoning that changes a decision, trade-offs, things that will bite — and cut the padding. Do not restate what the operator already understands, do not explain the same concept twice, and do not pad a two-line answer to ten. The guidance below on vocabulary and click paths applies to genuinely new ground, not to everything.
+
 **Do not skip the "why" entirely.** The operator makes good architectural decisions and pushes back usefully when reasoning is exposed. Explain the reason briefly, then the steps. Reason first, then mechanics.
 
 ### What does *not* need dumbing down

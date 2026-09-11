@@ -77,13 +77,62 @@
   FundedNext does prohibit it; FTMO is silent. Affects whether every intervention must
   route through the engine (§6.4).
 - Whether the FundedNext EA add-on can be purchased after checkout or only at checkout.
-- MT5 verification session (spec §10 items 1–4): historical depth per instrument,
-  `symbol_info` values, whether the order `comment` field survives, bar interval.
-  Needs a running terminal and a throwaway script. Depth is the one that matters —
-  it decides whether meaningful walk-forward validation is possible at all.
-  **Partial progress — see below.**
+- §10 item 2 — whether the broker preserves the order `comment` field. Needs an order
+  actually placed and read back, so it is a separate script on the demo account and a
+  separate decision. Appendix A.5 has a fallback either way, so this is not blocking.
 
-## Partial findings — FTMO M15 depth
+## MT5 verification — COMPLETE (2026-09-11)
+
+Ran `verify_mt5.py` against a fresh FTMO free trial. Server `FTMO-Demo`, company
+FTMO Global Markets Ltd, terminal build 6182. Full output saved at
+`C:\trading\data\mt5-verification-2026-09-11.json`.
+
+**§10 item 1 — history depth. ANSWERED.**
+
+| Internal | Broker symbol | M15 span | M15 bars |
+|---|---|---|---|
+| NAS100 | `US100.cash` | 8.7 yrs (from 2017-12-29) | 122,501 |
+| US500 | `US500.cash` | 8.7 yrs (from 2017-12-29) | 122,510 |
+| EURUSD | `EURUSD` | 4.05 yrs (from 2022-08-25) | 100,725 |
+| XAUUSD | `XAUUSD` | 4.22 yrs (from 2022-06-21) | 99,989 |
+| XAGUSD | `XAGUSD` | 4.25 yrs (from 2022-06-10) | 100,585 |
+
+Depth is sufficient at every timeframe. Accepted as answered; not pursued further.
+
+*Caveat:* FX and metals returned ~100,000 bars at M5, M15 and H1 alike — suspiciously
+uniform, and almost certainly the terminal's download chunking rather than FTMO's limit.
+Their D1 reaches 2005, so more intraday history very likely exists. Indices were not
+capped (354,465 M5 bars), so this is not a global ceiling. If a strategy later needs a
+longer intraday window, scroll those three charts fully back and re-run.
+
+**§10 item 4 — symbol specifications. ANSWERED.**
+
+- **Broker naming differs from the spec's instrument list.** FTMO uses `US100.cash` and
+  `US500.cash`, not `NAS100`/`SPX500_USD`. Internal names stay as they are; the adapter
+  maps them (Appendix A.6).
+- All five support **both FOK and IOC** filling modes (`filling_mode_raw: 3`). No
+  constraint on `order_send` fill type.
+- Volume min and step are 0.01 on all five. Max: 1000 on indices, 50 on EURUSD,
+  100 on metals.
+- Contract sizes: 1.0 indices, 100,000 EURUSD, 100 XAUUSD, 5000 XAGUSD.
+- Digits: 2 for indices and gold, 3 for silver, 5 for EURUSD.
+- Swaps are material and asymmetric — NAS100 -514.2 long vs -102.6 short; EURUSD and
+  XAGUSD are positive short. Confirms Appendix C.1: implement `CostModel.financing()`
+  properly rather than returning zero.
+- **`margin_initial` is 0.0 on every symbol.** Margin derives from account leverage, not
+  a per-symbol figure. The sizer needs leverage from `account_info()`, which this script
+  did not capture. Small gap — pick up when the sizer is built (phase 3).
+
+**§10 item 3 — bar interval. Still open, now for the right reason.** Depth no longer
+constrains the choice; all four timeframes are viable. The trade-off is spread as a
+share of each trade (favours longer bars) against trade count for the §7.1 random-entry
+percentile (favours shorter). Defer until there is a strategy candidate.
+
+**Not measured: spread.** The script's `spread_now_points` is a single snapshot and
+EURUSD returned 0 with bid == ask, which is a stale tick rather than a reading.
+Appendix C.1 wants a fitted distribution per instrument per hour-of-day. Separate job.
+
+## Superseded — earlier chart-scroll estimate
 
 Measured by scrolling charts in the terminal, not by script. Indicative only.
 
@@ -104,9 +153,10 @@ Measured by scrolling charts in the terminal, not by script. Indicative only.
 
 ## Next
 
-1. MT5 verification session — the four §10 items above. First real code in the project;
-   throwaway, not engine code. Requires `MetaTrader5` as an optional Windows-only
-   dependency, the terminal running and logged in.
+1. **Phase 0.** Repo skeleton (§3), core types (§2.1), config loading, decision log
+   schema (§2.9). Exit criterion: config round-trips; manifest records commit and config
+   hash; a decision log entry captures full context. Being run as four smaller tasks
+   rather than one, each ending in something checkable without reading Python.
 2. Phase 0: repo skeleton, core types, config loading, decision log schema.
    Exit criterion: config round-trips; manifest records commit and config hash;
    a decision log entry captures full context.

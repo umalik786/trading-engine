@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
+**Version:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
+**Previous:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
 **Previous:** 3 — external account constraints (§6.5); prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
 **Previous:** 2 — MT5 primary adapter, intervention rules, decision log, TradingView boundary
 **Purpose:** hand to Claude Code as the source of truth for a phased build
@@ -553,7 +554,7 @@ Property tests, hand-written per §7.3:
 
 #### 6.5.9 Note on simulated venues
 
-Prop-firm accounts are simulated environments, including after funding. Realised fills therefore reflect the firm's simulator rather than a market. This does not affect anything in this section, but it does mean the cost-model validation loop in Appendix C.4 cannot close on such a venue: comparing expected against realised fill measures the simulator's behaviour, not the market's. Record cost-model validation as unresolved for as long as the only venue is simulated.
+Prop-firm accounts are simulated environments, including after funding. FTMO's own site states that it provides services of simulated trading and educational tools only, does not act as a broker, and accepts no deposits (verified 2026-09-10). Realised fills therefore reflect the firm's simulator rather than a market. This does not affect anything in this section, but it does mean the cost-model validation loop in Appendix C.4 cannot close on such a venue: comparing expected against realised fill measures the simulator's behaviour, not the market's. Record cost-model validation as unresolved for as long as the only venue is simulated.
 
 ---
 
@@ -668,15 +669,15 @@ Items 1, 2 and 4 are answered from a free-trial or existing evaluation account o
 
 Third-party comparison sites disagree with each other and with the firms' own pages on nearly every figure. Use primary sources only, and record the date and URL per §6.5.6.
 
-5. **~~Does the firm permit external algorithmic execution~~ — ANSWERED, both firms.** FTMO's published position is that the mechanism is irrelevant provided behaviour complies. FundedNext's help centre states that a Python script executing trades is treated as automated trading and falls under its EA rules — *subject to the account-size ceiling in item 5a*.
+5. **~~Does the firm permit external algorithmic execution~~ — ANSWERED, both firms. VERIFIED 2026-09-10.** FTMO's published position is that trading style is the trader's own — discretionary, algorithmic or EA-driven alike — provided it is legitimate, conforms to real market conditions and does not resemble forbidden practices. **No account-size ceiling and no add-on fee appear anywhere in that statement.** Source: `ftmo.com/en/faq/which-instruments-can-i-trade-and-what-strategies-am-i-allowed-to-use/`. FTMO also does not require a stop-loss, though the risk layer imposes one regardless. FundedNext's help centre states that a Python script executing trades is treated as automated trading and falls under its EA rules — *subject to the account-size ceiling in item 5a*.
 5a. **FundedNext imposes a $50,000 automation ceiling — VERIFIED 2026-09-10.** EAs, bots and automated tools are permitted on MT4/MT5 only for accounts **below $50,000**. Accounts of $50,000 and above must be traded fully manually, in both Challenge and funded stages. The restriction extends to tools that place no trades and only modify stop loss, take profit or lot size. It also applies to cTrader and Match-Trader at any size. Source: `help.fundednext.com/en/articles/8020763`. **Consequence: on FundedNext this engine may only run on an account below $50,000, and the EA add-on fee is required and non-refundable.** FTMO has no equivalent size ceiling.
 5b. **FundedNext prohibits EAs incorporating third-party applications such as Telegram or WhatsApp — VERIFIED 2026-09-10.** Constrains the §6.4 control plane; see the note there. FTMO's position on this is unverified.
 5c. **FundedNext caps allocation at $300,000 per strategy** across accounts, and bans EAs designed specifically to pass prop-firm challenges, with a published named list.
 6. **~~Does the firm offer MT5~~ — ANSWERED.** Both firms offer MT5.
 7. **Exact rule figures for the specific plan held**: daily loss percentage, whether measured on equity or closed balance, its anchor, maximum loss percentage, floor mode, and the accounting-day reset time and timezone. These populate the §6.5.3 profile.
 8. **Profit targets per phase.** Reported inconsistently across sources for both firms; confirm before selecting a venue on that basis.
-9. **Prohibited practices and any news-trading restriction**, and whether a time-based filter is therefore required in strategy code.
-10. **Request-rate ceiling.** FTMO publishes a hyperactivity threshold of 2,000 server requests per day for order operations. A bar-close system on five instruments is far below this, but the polling loop in Appendix A.7 should be designed against a stated budget rather than assumed safe.
+9. **Prohibited practices and any news-trading restriction**, and whether a time-based filter is therefore required in strategy code. FTMO maintains a separate Forbidden Trading Practices page (`ftmo.com/en/forbidden-trading-practices/`) which is where the specific prohibitions live; the strategies FAQ only links to it. **Unread — read before phase 7.** FundedNext confirmed news trading allowed on the Stellar 2-Step, so no time-based filter is required on that venue.
+10. **~~Request-rate ceiling~~ — ANSWERED for FTMO, VERIFIED 2026-09-10.** FTMO's platform servers impose **200 orders at a time** and **2,000 maximum positions per day**, alongside limited acceptance of server messages — orders and order modifications such as TP/SL updates and limit-order updates. An EA causing hyperactivity may be flagged and asked to adjust its logic or parameters. Source: `ftmo.com/en/faq/which-instruments-can-i-trade-and-what-strategies-am-i-allowed-to-use/`. A bar-close system on five instruments is orders of magnitude below all three, but Appendix A.7's poll loop should still be designed against these stated figures rather than assumed safe. FundedNext's equivalent limits are unverified.
 11. **~~Eligibility from the operator's jurisdiction (UAE)~~ — ANSWERED.** The operator holds live accounts with both firms.
 
 ---

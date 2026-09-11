@@ -76,6 +76,8 @@ Recorded here so they are not re-litigated or forgotten.
 
 **External limits are configuration, never code.** Both `fundednext_stellar_2step` and `ftmo_2step` profiles are built; which one is used is deferred to phase 7. Both floor modes — static and end-of-day trailing — are implemented together even though the default only needs static, because the trailing high-water mark lives in persisted `RiskState` and adding a field to persisted state later would mean a migration on a running system. Two profiles is also the test that the constraint model is genuinely general, in the same sense that a second broker adapter tests the `Broker` protocol.
 
+**FTMO permits automation at every account size, free, with no add-on.** Verified 2026-09-10 from their strategies FAQ. Their published position is that mechanism is irrelevant provided behaviour complies. This is the main engineering argument for FTMO over FundedNext and the reason the current lean is FTMO.
+
 **FundedNext bars automation at $50,000 and above.** Verified 2026-09-10 from their help centre. On FundedNext this engine may only run on an account below $50,000, with a non-refundable EA add-on fee. FTMO has no size ceiling and charges nothing extra. Neither support agent volunteered the threshold when asked whether Python automation was permitted — both answered the question asked, correctly and incompletely.
 
 **The control plane must not use Telegram or WhatsApp.** FundedNext prohibits EAs incorporating third-party messaging applications. An earlier suggestion in this project to drive the §6.4 kill switch from a Telegram bot is withdrawn; the local control file stands, but whatever writes it must be local.

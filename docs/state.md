@@ -16,7 +16,7 @@
 - **Which firm is deliberately undecided**, and stays undecided until phase 7.
 - Do not buy an evaluation before phase 6. Phases 0–6 touch no broker, and knowing where
   a strategy sits against the random-entry baseline is cheaper than paying to find out.
-- Spec now at version 3.1.
+- Spec now at version 3.2.
 - **Current lean is FTMO**, on the strength of no size ceiling, no add-on fee, and a
   published position on automation that is explicitly mechanism-agnostic. Recorded as
   a lean, not a decision: §10 defers the choice to phase 7, and both profiles are built
@@ -43,6 +43,20 @@
 - **FundedNext caps allocation at $300k per strategy** and bans EAs built to pass
   prop-firm challenges.
 - **UAE eligibility**: fine. Accounts held with both firms.
+- **FTMO permits algorithmic trading and EAs with no account-size ceiling and no
+  add-on fee.** Trading style is the trader's own provided it is legitimate, conforms
+  to real market conditions and avoids forbidden practices. No stop-loss required
+  (the risk layer imposes one anyway).
+  Source: `ftmo.com/en/faq/which-instruments-can-i-trade-and-what-strategies-am-i-allowed-to-use/`,
+  checked 2026-09-10.
+- **FTMO server limits**: 200 orders at a time, 2,000 maximum positions per day, plus
+  limited acceptance of server messages (orders and TP/SL or limit-order modifications).
+  Hyperactivity may be flagged. A bar-close system on five instruments is far below all
+  three. This corrects an earlier, wrongly stated figure in spec §10 item 10.
+- **FTMO states on its own site that it provides simulated trading only**, does not act
+  as a broker and accepts no deposits. Primary-source confirmation for §6.5.9.
+- **FTMO offers unlimited free trials with no time limit.** The MT5 verification script
+  should run against a free trial, not a paid evaluation.
 
 ## Blocked on
 
@@ -53,7 +67,15 @@
 - Accounting-day reset time and timezone, and what the daily limit anchors to
   (initial balance, or each day's opening balance). Needed to complete the §6.5.3
   profiles. Ask FundedNext support; read FTMO's trading objectives page.
-- FTMO's position on third-party messaging integrations — unverified.
+- FTMO's position on third-party messaging integrations — still unverified; their
+  strategies FAQ is silent on it. §6.4's local-control-file constraint stands regardless,
+  since it is the safer design at either venue.
+- **FTMO's Forbidden Trading Practices page is unread** (`ftmo.com/en/forbidden-trading-practices/`).
+  This is where the specific prohibitions live — the strategies FAQ only links to it.
+  Read before phase 7.
+- Whether FTMO prohibits mixing manual and automated execution on one account.
+  FundedNext does prohibit it; FTMO is silent. Affects whether every intervention must
+  route through the engine (§6.4).
 - Whether the FundedNext EA add-on can be purchased after checkout or only at checkout.
 - MT5 verification session (spec §10 items 1–4): historical depth per instrument,
   `symbol_info` values, whether the order `comment` field survives, bar interval.

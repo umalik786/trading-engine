@@ -1,7 +1,7 @@
 # Current State
 
-**Phase:** 0 — starting. Task 1 of 4 (repo skeleton and tooling config).
-**Last session:** 11 September 2026
+**Phase:** 0 — COMPLETE, exit criterion met. Phase 1 not started.
+**Last session:** 14 September 2026
 
 ## Decided recently
 
@@ -132,24 +132,79 @@ percentile (favours shorter). Defer until there is a strategy candidate.
 EURUSD returned 0 with bid == ask, which is a stale tick rather than a reading.
 Appendix C.1 wants a fitted distribution per instrument per hour-of-day. Separate job.
 
+## Phase 0 — COMPLETE (2026-09-14)
+
+Run as four tasks, each ending in something checkable without reading Python.
+Claude Code wrote; chat-side reviewed between tasks.
+
+**Exit criterion — all three demonstrated:**
+
+| Criterion | Evidence |
+|---|---|
+| Config round-trips | Parametrized test over both YAML profiles; load → dump → reload equal |
+| Manifest records commit + config hash | Built live against the repo; `git rev-parse HEAD` plus SHA-256 of the config file |
+| Decision log captures full context | Sample JSONL line written — a REJECT carrying features, strategy output, reason, order and account snapshot |
+
+**What exists now:**
+
+- `src/engine/core/types.py` — `Bar`, `TargetPosition`, `Order`, `Fill` per §2.1.
+  Frozen dataclasses. Runtime guards beyond the spec: `require_utc` rejects naive and
+  non-UTC datetimes; `require_decimal` rejects floats in monetary fields, forcing
+  callers through `Decimal(str(x))`. `Bar` validates OHLC inequalities and bar ordering.
+- `src/engine/core/config.py` — pydantic v2 schema for §6.5.3 `account_constraints`,
+  plus `load_account_constraints()`. IANA timezone validated via `zoneinfo`;
+  `internal_pct < external_pct` enforced; §6.5.6 staleness and never-verified warnings.
+- `config/ftmo_2step.yaml` and `config/fundednext_stellar_2step.yaml` — the two profiles
+  genuinely differ (`trailing_eod` / `day_open_balance` vs `static` / `initial_balance`),
+  so §6.5.1's "switching firm is a config edit" is exercised rather than asserted.
+- `src/engine/core/decisions.py` — `DecisionRecord` per §2.9, `RiskDecision` enum.
+  The "rejections logged as fully as executions" property is enforced in
+  `__post_init__` rather than left to convention: the non-empty guards on `features`,
+  `strategy_reason`, `risk_reason` and `account_snapshot` do not branch on
+  `risk_decision`, so a REJECT has no path to omit context.
+- `src/engine/observability/decision_log.py` — append-only JSONL. `Decimal` serialises
+  as a string, never a float. Datetimes ISO-8601 with offset. Every write flushed **and
+  fsynced** — `flush()` alone survives a Python exception but not a power cut, and
+  §2.9's reason for the log calls for the stronger guarantee.
+  Default path `C:/trading/runtime/logs/decisions.jsonl`, outside the repo.
+- `src/engine/core/manifest.py` — P5 run manifest. Commit hash, **dirty-tree flag**,
+  config hash, data range, seed, UTC start time.
+
+**Dependencies added:** `pydantic`, `pyyaml`, `tzdata`, and `ruff` (dev).
+
+`tzdata` was an unplanned find. Windows ships no system IANA database, so
+`zoneinfo.ZoneInfo` fails on every valid timezone name without it. Without this the
+accounting-day boundary work in phase 4 would have been silently broken on this machine
+and on the production host.
+
+**Test count: 56, all passing. `ruff check .` clean.**
+
+## Carried forward — known gaps, not blocking
+
+- **Provenance hole (§6.5.6).** A profile with `rules_verified` set but `rules_source`
+  null loads without warning. FundedNext's profile is currently in exactly that state.
+  Fix when the constraint code is written in phase 4.
+- **`realised_fill` backfill is documented, not enforced.** Nothing prevents
+  constructing a record with it already set, or replacing other fields alongside it.
+  Matters at phase 7, when there is a real write path.
+- **`test_inverted_high_low_rejected_by_ohlc_checks_collectively`** — renamed after
+  discovering it passed with the `high >= low` guard removed, because an earlier OHLC
+  check always fires first. The guard is mathematically redundant given the other four.
+  Kept as insurance; the test name now tells the truth about what it exercises.
+
 ## Next
 
-1. **Phase 0**, split into four tasks so each ends in something checkable without
-   reading Python. Claude Code writes; chat-side reviews between tasks.
+1. **Phase 1.** Feed protocol, `ReplayFeed`, streaming feature pipeline.
+   Exit criterion: the §7.3 future-shuffle property test passes — shuffling the future
+   portion of a dataset never changes decisions already made.
 
-   | | Task | Check |
-   |---|---|---|
-   | 0.1 | Repo skeleton (§3), ruff and pytest config | Tree matches §3; `ruff check` clean; existing 2 tests still pass; `DTZ` rule present |
-   | 0.2 | Core types (§2.1) | Field lists match spec; naive datetimes rejected |
-   | 0.3 | Config loading | Original and regenerated YAML identical |
-   | 0.4 | Decision log (§2.9) and run manifest | All fields present; manifest carries commit and config hash |
+   Note: that exit criterion is a **property test**, and §7.3 requires those to be
+   hand-written by the operator rather than generated from the same specification as
+   the implementation. This is the first phase where the known gap in §5 of
+   `operator-context.md` becomes load-bearing rather than theoretical.
 
-   Phase exit criterion: config round-trips; manifest records commit and config hash;
-   a decision log entry captures full context.
-
-   §2.9 is the one that cannot be retrofitted — decision context not captured at the
-   time is unrecoverable, and everything in §13 depends on it.
-2. Phase 1 only after phase 0's exit criterion passes. Do not start it early.
+2. Bar interval (§10 item 3) is still open and does not block phase 1 — `ReplayFeed`
+   reads whatever interval the data file holds.
 
 ## Running alongside
 

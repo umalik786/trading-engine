@@ -1,0 +1,39 @@
+# FundedNext Stellar 2-Step, $100k evaluation.
+# Percentages, measured_on and mode verified against primary sources,
+# docs/state.md, 2026-09-10.
+# NOTE: FundedNext bars automation on accounts of $50,000 and above (see
+# docs/state.md). This profile is retained per the phase-7 lean, but the
+# usable account size for automated trading on this venue is below $50k.
+account_constraints:
+  profile: fundednext_stellar_2step
+  rules_verified: "2026-09-10"
+  # The daily_loss/max_loss percentages below come from the Stellar 2-Step
+  # $100k checkout page, per docs/state.md, 2026-09-10 -- but the checkout
+  # URL itself was not recorded at the time and is not on file. Left unset
+  # rather than guessed; fill in once the checkout page is re-visited.
+  rules_source: null
+  # The firm's own article on EA/automation policy -- a separate source from
+  # the loss-limit figures above, so it gets its own field rather than
+  # overloading rules_source with two different pages.
+  automation_policy_source: "https://help.fundednext.com/en/articles/8020763"
+
+  accounting_day:
+    reset_time: "00:00"  # UNVERIFIED -- placeholder, not yet confirmed with FundedNext
+    timezone: "Europe/Prague"  # UNVERIFIED -- placeholder, not yet confirmed with FundedNext
+
+  daily_loss:
+    external_pct: 5.0  # the firm's limit -- docs/state.md, verified 2026-09-10
+    # 60% of external_pct, per §6.5.4's placeholder rule -- underived until
+    # historical intra-bar excursion and exit-slippage data exist
+    internal_pct: 3.0
+    # confirmed via FundedNext support: both open and closed positions count
+    # toward the daily and maximum loss limits -- docs/state.md, 2026-09-10
+    measured_on: equity
+    anchor: initial_balance  # UNVERIFIED -- placeholder, daily-loss anchor not yet confirmed with FundedNext
+
+  max_loss:
+    external_pct: 10.0  # the firm's limit -- docs/state.md, verified 2026-09-10
+    # 60% of external_pct, per §6.5.4's placeholder rule -- underived until
+    # historical intra-bar excursion and exit-slippage data exist
+    internal_pct: 6.0
+    mode: static  # "drawdown static" -- docs/state.md, verified 2026-09-10

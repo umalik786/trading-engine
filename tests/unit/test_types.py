@@ -78,7 +78,12 @@ class TestBarTimeValidation:
 
 
 class TestBarOhlcValidation:
-    def test_high_below_low_rejected(self) -> None:
+    def test_inverted_high_low_rejected_by_ohlc_checks_collectively(self) -> None:
+        # Cannot isolate the `high >= low` guard alone: if high < low, the
+        # [low, high] interval is empty, so any open/close value trips one of
+        # the other four checks (high>=open, high>=close, low<=open,
+        # low<=close) first. Verified by temporarily disabling that guard and
+        # confirming this test still passed — see task 2 session notes.
         with pytest.raises(ValueError, match="high"):
             _bar(
                 high=Decimal("1.0"), low=Decimal("1.1"), open=Decimal("1.05"), close=Decimal("1.05")

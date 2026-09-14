@@ -11,14 +11,14 @@ from decimal import Decimal
 from typing import Literal
 
 
-def _require_utc(field_name: str, value: datetime) -> None:
+def require_utc(field_name: str, value: datetime) -> None:
     if value.tzinfo is None:
         raise ValueError(f"{field_name} must be timezone-aware, got a naive datetime: {value!r}")
     if value.utcoffset() != timedelta(0):
         raise ValueError(f"{field_name} must be UTC, got offset {value.utcoffset()}: {value!r}")
 
 
-def _require_decimal(field_name: str, value: Decimal | None) -> None:
+def require_decimal(field_name: str, value: Decimal | None) -> None:
     if value is None:
         return
     if not isinstance(value, Decimal):
@@ -41,10 +41,10 @@ class Bar:
     is_final: bool  # False for in-progress bars; strategies see finals only
 
     def __post_init__(self) -> None:
-        _require_utc("ts_open", self.ts_open)
-        _require_utc("ts_close", self.ts_close)
+        require_utc("ts_open", self.ts_open)
+        require_utc("ts_close", self.ts_close)
         for field_name in ("open", "high", "low", "close", "volume"):
-            _require_decimal(field_name, getattr(self, field_name))
+            require_decimal(field_name, getattr(self, field_name))
         if self.ts_close <= self.ts_open:
             raise ValueError(
                 f"ts_close ({self.ts_close!r}) must be after ts_open ({self.ts_open!r})"
@@ -74,7 +74,7 @@ class TargetPosition:
 
     def __post_init__(self) -> None:
         for field_name in ("quantity", "weight", "stop_price", "take_profit", "confidence"):
-            _require_decimal(field_name, getattr(self, field_name))
+            require_decimal(field_name, getattr(self, field_name))
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class Order:
 
     def __post_init__(self) -> None:
         for field_name in ("quantity", "limit_price", "stop_price"):
-            _require_decimal(field_name, getattr(self, field_name))
+            require_decimal(field_name, getattr(self, field_name))
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,6 @@ class Fill:
     ts: datetime
 
     def __post_init__(self) -> None:
-        _require_utc("ts", self.ts)
+        require_utc("ts", self.ts)
         for field_name in ("quantity", "price", "fees"):
-            _require_decimal(field_name, getattr(self, field_name))
+            require_decimal(field_name, getattr(self, field_name))

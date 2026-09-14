@@ -18,7 +18,7 @@ Output:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import MetaTrader5 as mt5
@@ -43,7 +43,7 @@ TIMEFRAMES = {
 
 # Deliberately earlier than any retail broker holds, so the server's own
 # limit is what we measure rather than ours.
-HISTORY_START = datetime(2005, 1, 1, tzinfo=timezone.utc)
+HISTORY_START = datetime(2005, 1, 1, tzinfo=UTC)
 
 OUTPUT_DIR = Path(r"C:\trading\data")
 
@@ -69,7 +69,7 @@ def resolve_symbols() -> dict[str, str | None]:
     all_symbols = mt5.symbols_get()
     if all_symbols is None:
         print("  Could not list symbols:", mt5.last_error())
-        return {k: None for k in WANTED}
+        return dict.fromkeys(WANTED)
 
     names = [s.name for s in all_symbols]
     print(f"  Server exposes {len(names)} symbols.")
@@ -134,7 +134,7 @@ def measure_depth(broker_name: str) -> dict:
     This is the number that decides whether walk-forward validation is
     possible at all, so it is measured rather than assumed.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = {}
 
     for label, tf in TIMEFRAMES.items():
@@ -150,8 +150,8 @@ def measure_depth(broker_name: str) -> dict:
             }
             continue
 
-        earliest = datetime.fromtimestamp(int(rates[0]["time"]), tz=timezone.utc)
-        latest = datetime.fromtimestamp(int(rates[-1]["time"]), tz=timezone.utc)
+        earliest = datetime.fromtimestamp(int(rates[0]["time"]), tz=UTC)
+        latest = datetime.fromtimestamp(int(rates[-1]["time"]), tz=UTC)
         span_years = (latest - earliest).days / 365.25
 
         result[label] = {
@@ -189,7 +189,7 @@ def main() -> None:
     resolved = resolve_symbols()
 
     report = {
-        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_utc": datetime.now(UTC).isoformat(),
         "server": acct.server if acct else None,
         "company": acct.company if acct else None,
         "terminal_build": term.build,
@@ -233,7 +233,7 @@ def main() -> None:
         report["instruments"][internal] = {"spec": spec, "depth": depth}
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     out = OUTPUT_DIR / f"mt5-verification-{stamp}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
 

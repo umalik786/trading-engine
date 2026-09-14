@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def test_arithmetic_works():
@@ -6,5 +6,5 @@ def test_arithmetic_works():
 
 
 def test_datetime_is_timezone_aware():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert now.tzinfo is not None

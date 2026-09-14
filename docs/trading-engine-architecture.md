@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
+**Version:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
+**Previous:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
 **Previous:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
 **Previous:** 3 — external account constraints (§6.5); prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
 **Previous:** 2 — MT5 primary adapter, intervention rules, decision log, TradingView boundary
@@ -295,7 +296,7 @@ engine/
       always_flat.py
       random_entry.py
       perfect_foresight.py
-    user/               # your actual strategies live here
+    user/               # placeholder only — see note below
   sizing/
   risk/
     gate.py
@@ -324,6 +325,10 @@ tests/
   properties/           # hand-written, adversarial — see §7.3
   golden/               # recorded replays with expected outputs
 ```
+
+**On `strategies/user/`.** This directory is a placeholder in the public repository, holding only a `.gitkeep` and a README. Real strategies live in a separately versioned private package, installed with `uv add --editable`, and loaded by import string from configuration — e.g. `my_strategies.some_strategy:Strategy`.
+
+Two reasons. The public repository then has no private-shaped gap in it, so there is nothing to commit by accident. And loading a strategy from a separately installed package with no `sys.path` manipulation is a real test of P3: if the engine can do that, the plugin contract is genuine rather than a convention that happens to hold because everything sits in one tree.
 
 ---
 

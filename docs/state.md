@@ -1,7 +1,7 @@
 # Current State
 
-**Phase:** 0 — not started
-**Last session:** 10 September 2026
+**Phase:** 0 — starting. Task 1 of 4 (repo skeleton and tooling config).
+**Last session:** 11 September 2026
 
 ## Decided recently
 
@@ -23,7 +23,7 @@
   regardless. Settling it early would create a pull toward not building the second
   profile, which is how a general abstraction quietly stops being general.
 
-## Verified this session, from primary sources
+## Venue rules verified from primary sources (2026-09-10)
 
 - **FundedNext bars automation on accounts of $50,000 and above.** EAs, bots and any
   automated tool are permitted only below $50k, on MT4/MT5 only, with a non-refundable
@@ -132,34 +132,24 @@ percentile (favours shorter). Defer until there is a strategy candidate.
 EURUSD returned 0 with bid == ask, which is a stale tick rather than a reading.
 Appendix C.1 wants a fitted distribution per instrument per hour-of-day. Separate job.
 
-## Superseded — earlier chart-scroll estimate
-
-Measured by scrolling charts in the terminal, not by script. Indicative only.
-
-- **Max bars in chart** is already set to unlimited on the terminal (Tools → Options →
-  Charts). This setting silently caps history depth and is the most common false
-  negative when checking a broker's data.
-- EURUSD and XAUUSD both scroll back past 2023 and were still loading when stopped.
-  Two-plus years of M15 is enough for the phase 5 and 6 comparisons to say something,
-  though not generously.
-- An earlier reading of **February 2024 was wrong** — that was the download still in
-  progress, not the server's limit. Taken at face value it would have led to a bar
-  interval and walk-forward window sized for a fraction of the real dataset.
-- **Chart scrolling is not a measurement.** Use `copy_rates_range` from 2005 and read
-  the earliest bar actually returned. Do not record a depth figure obtained any other
-  way.
-- Not yet checked: NAS100, US500, XAGUSD. Exact symbol names on FTMO's server also
-  still unrecorded (§10 item 4).
-
 ## Next
 
-1. **Phase 0.** Repo skeleton (§3), core types (§2.1), config loading, decision log
-   schema (§2.9). Exit criterion: config round-trips; manifest records commit and config
-   hash; a decision log entry captures full context. Being run as four smaller tasks
-   rather than one, each ending in something checkable without reading Python.
-2. Phase 0: repo skeleton, core types, config loading, decision log schema.
-   Exit criterion: config round-trips; manifest records commit and config hash;
+1. **Phase 0**, split into four tasks so each ends in something checkable without
+   reading Python. Claude Code writes; chat-side reviews between tasks.
+
+   | | Task | Check |
+   |---|---|---|
+   | 0.1 | Repo skeleton (§3), ruff and pytest config | Tree matches §3; `ruff check` clean; existing 2 tests still pass; `DTZ` rule present |
+   | 0.2 | Core types (§2.1) | Field lists match spec; naive datetimes rejected |
+   | 0.3 | Config loading | Original and regenerated YAML identical |
+   | 0.4 | Decision log (§2.9) and run manifest | All fields present; manifest carries commit and config hash |
+
+   Phase exit criterion: config round-trips; manifest records commit and config hash;
    a decision log entry captures full context.
+
+   §2.9 is the one that cannot be retrofitted — decision context not captured at the
+   time is unrecoverable, and everything in §13 depends on it.
+2. Phase 1 only after phase 0's exit criterion passes. Do not start it early.
 
 ## Running alongside
 

@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
+**Version:** 3.4 — records the no-gap-fill rule for stored data (B.6)
+**Previous:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
 **Previous:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
 **Previous:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
 **Previous:** 3 — external account constraints (§6.5); prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
@@ -877,6 +878,8 @@ Units are instrument-specific and not lots. Pull precision and minimum size from
 The five instruments do not share a calendar. FX and metals trade nearly continuously Sunday evening to Friday evening; index CFDs have daily breaks and different holiday schedules. Encode per-instrument sessions in configuration, and have the feed emit an explicit market-closed signal rather than silently producing no bars — a strategy needs to distinguish "no data" from "market shut".
 
 Weekend gaps are a first-class scenario, not an edge case. Include at least one in the golden replays (§7.4).
+
+**Stored historical data is never gap-filled.** Extraction writes exactly what the venue returns. Weekends, holidays and session breaks appear as absent rows, and no synthetic bar, forward fill or zero-volume placeholder is inserted. A missing bar means the market was shut; inventing one invents a price that was never traded, and a strategy that trades it is trading fiction. Features must therefore tolerate irregular time spacing — a rolling window is a window over *bars*, not over clock time, and any feature whose meaning depends on even spacing must say so and handle the jump explicitly.
 
 ---
 

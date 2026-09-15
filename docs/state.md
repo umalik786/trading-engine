@@ -1,7 +1,7 @@
 # Current State
 
 **Phase:** 0 — COMPLETE, exit criterion met. Phase 1 not started.
-**Last session:** 14 September 2026
+**Last session:** 15 September 2026
 
 ## Decided recently
 
@@ -179,6 +179,62 @@ and on the production host.
 
 **Test count: 56, all passing. `ruff check .` clean.**
 
+## Data extraction — COMPLETE (2026-09-15)
+
+`extract_mt5_data.py` (repo root, throwaway tooling, not imported from `src/`) pulls M15,
+H1 and H4 for all five instruments from FTMO-Demo into
+`C:/trading/data/raw/<internal_name>/<timeframe>/<year>.parquet`, with a manifest per
+instrument/timeframe. Outside the repo, per the folder layout. Re-runnable; `--force`
+re-fetches.
+
+**M15 — the chosen interval (§10 item 3, now settled):**
+
+| Instrument | Bars | From |
+|---|---|---|
+| NAS100 | 122,663 | 2017-12-29 |
+| US500 | 122,672 | 2017-12-29 |
+| EURUSD | 100,026 | 2022-09-07 |
+| XAUUSD | 100,026 | 2022-06-22 |
+| XAGUSD | 100,026 | 2022-06-21 |
+
+H1 and H4 also extracted. H4 on EURUSD and XAUUSD reaches back to 2005.
+
+**Decision: M15 downloaded directly, not aggregated from M1.** Aggregating would have
+introduced the partial-bar leak class — a 15-minute bar that updates before minute 15
+completes is showing the future — in the very phase whose job is to prove leaks
+impossible. Re-downloading a different interval is cheap and reversible; a subtle
+aggregation leak is neither. If a venue-unavailable interval is ever needed, build
+aggregation then, with the phase 1 harness already in place to check it.
+
+**Decision: store exactly what MT5 returns. No gap filling.** Weekends, holidays and
+index session breaks are absent rows. Now recorded in the spec at Appendix B.6.
+
+### A real bug the live run caught
+
+`mt5.copy_rates_range()` does **not** return an empty array for a window containing no
+data. It returns the single nearest bar from *outside* the window. Querying NAS100 M15
+for all of 2005 returned one bar dated 2017-12-29 — the series' true start.
+
+Unfiltered, this would have written a duplicate of each instrument's first bar into
+every preceding empty year, misdated by up to twelve years. It would not have crashed.
+`Bar` validation would not have caught it, because the bar is internally valid — it is
+simply in the wrong year. It would have surfaced as a backtest quietly running over
+fabricated history.
+
+Fixed by filtering every result to bars actually inside the requested window. A
+second-order bug followed: after the fix, `--force` correctly found zero bars for empty
+years but left the stale file on disk, so a "fixed" re-run still produced bad data.
+Fixed by deleting the file when a forced re-fetch legitimately finds nothing.
+
+**Lesson worth keeping: a broker API returning something plausible is not the same as it
+returning something true.** The suspicious signal was "1 bar" appearing in every empty
+year — a pattern too regular to be real. Treat uniform-looking output as a prompt to
+check, as with the earlier ~100,000-bar reading.
+
+**Stored types verified on a real file:** `time` is `timestamp[us, tz=UTC]`,
+OHLC are `decimal128(precision = 10 + digits, scale = digits)`, values read back as
+Python `Decimal`. No float exists anywhere in the stored path.
+
 ## Carried forward — known gaps, not blocking
 
 - **Provenance hole (§6.5.6).** A profile with `rules_verified` set but `rules_source`
@@ -203,8 +259,7 @@ and on the production host.
    the implementation. This is the first phase where the known gap in §5 of
    `operator-context.md` becomes load-bearing rather than theoretical.
 
-2. Bar interval (§10 item 3) is still open and does not block phase 1 — `ReplayFeed`
-   reads whatever interval the data file holds.
+2. Bar interval: **M15, settled 2026-09-15**. §10 item 3 closed.
 
 ## Running alongside
 

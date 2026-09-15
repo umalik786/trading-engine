@@ -1,13 +1,40 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.4 — records the no-gap-fill rule for stored data (B.6)
+**Version:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
+**Previous:** 3.4 — records the no-gap-fill rule for stored data (B.6)
 **Previous:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
 **Previous:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
 **Previous:** 3.1 — records the FundedNext $50,000 automation ceiling (§10), reopens the venue choice, and constrains the §6.4 control plane against third-party messaging integrations
 **Previous:** 3 — external account constraints (§6.5); prop-firm verification items in §10; simulated-venue caveat in Appendix C.4
 **Previous:** 2 — MT5 primary adapter, intervention rules, decision log, TradingView boundary
 **Purpose:** hand to Claude Code as the source of truth for a phased build
+
+---
+
+## Contents
+
+Every section this document contains. If a section number is cited and does not appear
+here, the citation is wrong — say so rather than working around it.
+
+**0.** Scope and non-goals
+**1.** Design principles — P1 one engine two wirings · P2 causality by construction · P3 strategy is a plugin · P4 risk has veto · P5 determinism · P6 costs are a model
+**2.** Component contracts — 2.1 core data types · 2.2 feed adapter · 2.3 feature pipeline · 2.4 strategy plugin · 2.5 position sizer · 2.6 risk gate · 2.7 broker adapter · 2.8 cost model · 2.9 decision log
+**3.** Repository structure
+**4.** The two wirings
+**5.** State, restart and reconciliation — 5.1 what is authoritative · 5.2 order idempotency · 5.3 startup reconciliation
+**6.** Risk layer specification — 6.1 structure · 6.2 on threshold values · 6.3 risk state persistence · 6.4 intervention rules · 6.5 external account constraints (6.5.1 principle · 6.5.2 required capabilities · 6.5.3 configuration · 6.5.4 deriving the internal margin · 6.5.5 persisted state · 6.5.6 rule provenance · 6.5.7 interaction with 6.4 · 6.5.8 exit criteria · 6.5.9 note on simulated venues)
+**7.** Validation strategy — 7.1 reference strategies · 7.2 parity harness · 7.3 property tests, hand-written · 7.4 golden replays
+**8.** Walk-forward validation
+**9.** Build phases
+**10.** Decisions — settled · still to verify before phase 0 · also to verify, from the firm's own rulebook
+**11.** Summary of changes from the reference framework
+**12.** Research workflow and the TradingView boundary
+**13.** Deferred: LLM advisory layer
+
+**Appendix A** — MT5 broker adapter (primary): A.1 shape · A.2 runtime requirements · A.3 capabilities used · A.4 reconciliation · A.5 idempotency · A.6 broker-specific configuration · A.7 no push streaming
+**Appendix B** — OANDA v20 broker adapter (second implementation): B.1 why this venue · B.2 environments · B.3 endpoints · B.4 reconciliation using transaction IDs · B.5 instrument mapping · B.6 trading hours (includes the no-gap-fill rule for stored data)
+**Appendix C** — Cost model for leveraged instruments: C.1 components · C.2 spread ceiling in the risk gate · C.3 margin close-out as a risk input · C.4 validating the model
 
 ---
 

@@ -3,6 +3,7 @@ Appendix B.6 (no gap-filling for stored data)."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from itertools import pairwise
@@ -269,3 +270,84 @@ class TestConstructorValidation:
                 range_end=datetime(2024, 1, 3, tzinfo=UTC),
                 data_root=tmp_path,
             )
+
+
+def _write_manifest(
+    root: Path, instrument: str, timeframe: str, server_timezone: dict | None
+) -> None:
+    out_dir = root / instrument / timeframe
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"internal_name": instrument, "timeframe": timeframe}
+    if server_timezone is not None:
+        manifest["server_timezone"] = server_timezone
+    (out_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _construct_feed(tmp_path: Path) -> None:
+    ReplayFeed(
+        instrument="EURUSD",
+        timeframe="M15",
+        range_start=datetime(2024, 1, 1, tzinfo=UTC),
+        range_end=datetime(2024, 1, 3, tzinfo=UTC),
+        data_root=tmp_path,
+    )
+
+
+class TestServerTimezoneProvenance:
+    """§6.5.6: the extraction manifest's server_timezone claim must be
+    checked the same way account-constraints provenance is -- a date with
+    no source, a source with no date, or a stale date, all warn."""
+
+    def test_no_manifest_present_does_not_warn(
+        self, tmp_path: Path, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 5)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+        _construct_feed(tmp_path)
+        assert len(recwarn) == 0
+
+    def test_complete_fresh_verification_does_not_warn(
+        self, tmp_path: Path, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 5)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+        _write_manifest(
+            tmp_path,
+            "EURUSD",
+            "M15",
+            {
+                "verified": datetime.now(UTC).date().isoformat(),
+                "source": "https://ftmo.com/en/blog/trading-updates/trading-update-5-mar-2026/",
+            },
+        )
+        _construct_feed(tmp_path)
+        assert len(recwarn) == 0
+
+    def test_missing_source_warns(self, tmp_path: Path) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 5)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+        _write_manifest(
+            tmp_path, "EURUSD", "M15", {"verified": "2026-09-17", "source": None}
+        )
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            _construct_feed(tmp_path)
+
+    def test_stale_verification_warns(self, tmp_path: Path) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 5)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+        stale_date = (datetime.now(UTC) - timedelta(days=200)).date().isoformat()
+        _write_manifest(
+            tmp_path,
+            "EURUSD",
+            "M15",
+            {"verified": stale_date, "source": "https://example.com"},
+        )
+        with pytest.warns(UserWarning, match="days old"):
+            _construct_feed(tmp_path)
+
+    def test_manifest_with_no_server_timezone_key_warns(self, tmp_path: Path) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 5)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+        _write_manifest(tmp_path, "EURUSD", "M15", server_timezone=None)
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            _construct_feed(tmp_path)

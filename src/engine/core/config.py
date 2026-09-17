@@ -8,8 +8,7 @@ these limits; that is phase 4.
 from __future__ import annotations
 
 import re
-import warnings
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -18,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
 
-DEFAULT_STALE_AFTER_DAYS = 90
+from engine.core.provenance import DEFAULT_STALE_AFTER_DAYS, warn_if_unverified_or_stale
 
 _RESET_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -92,25 +91,18 @@ def load_account_constraints(
 ) -> AccountConstraints:
     """Load and validate an account_constraints profile from YAML.
 
-    Warns (does not raise) per §6.5.6 if the profile has never been verified,
-    or was verified longer ago than `stale_after_days`.
+    Warns (does not raise) per §6.5.6 if the profile's rules_verified/
+    rules_source pair is incomplete (either missing) or stale -- see
+    `warn_if_unverified_or_stale`. A verified date with no source is not a
+    verification, and neither is a source with no date.
     """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     constraints = AccountConstraints.model_validate(raw["account_constraints"])
-    if constraints.rules_verified is None:
-        warnings.warn(
-            f"{constraints.profile}: rules_verified is unset -- this profile has "
-            "never been checked against the firm's own rulebook (spec section 6.5.6)",
-            stacklevel=2,
-        )
-    else:
-        age_days = (datetime.now(UTC).date() - constraints.rules_verified).days
-        if age_days > stale_after_days:
-            warnings.warn(
-                f"{constraints.profile}: rules_verified ({constraints.rules_verified}) "
-                f"is {age_days} days old, older than the {stale_after_days}-day "
-                f"threshold -- re-verify against {constraints.rules_source} "
-                "(spec section 6.5.6)",
-                stacklevel=2,
-            )
+    warn_if_unverified_or_stale(
+        subject=constraints.profile,
+        verified=constraints.rules_verified,
+        source=constraints.rules_source,
+        stale_after_days=stale_after_days,
+        stacklevel=3,
+    )
     return constraints

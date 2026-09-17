@@ -122,8 +122,15 @@ class TestRoundTrip:
 
 class TestRuleProvenanceWarning:
     def test_never_verified_profile_warns_at_load(self) -> None:
-        with pytest.warns(UserWarning, match="never been checked"):
+        with pytest.warns(UserWarning, match="verification is incomplete"):
             load_account_constraints(FTMO_YAML)
+
+    def test_verified_with_no_source_warns_at_load(self) -> None:
+        # docs/state.md's carried-forward gap: FundedNext has rules_verified
+        # set but rules_source null. A date with no source is not a
+        # verification (spec section 6.5.6), and must not load silently.
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            load_account_constraints(FUNDEDNEXT_YAML)
 
     def test_stale_rules_verified_warns_at_load(self, tmp_path: Path) -> None:
         raw = _valid_raw()

@@ -3,8 +3,7 @@ MT5 historical data extraction -- year-by-year, to parquet.
 
 Throwaway tooling, not engine code. Lives in the repo root like
 verify_mt5.py and is never imported from src/. It only extracts and stores
-raw broker data; building Bar objects from it is ReplayFeed's job (not yet
-written).
+raw broker data; building Bar objects from it is ReplayFeed's job.
 
 Why year-by-year: verify_mt5.py found that a single copy_rates_range() call
 across the full history returns exactly ~100,000 bars for EURUSD, XAUUSD and
@@ -17,6 +16,14 @@ larger, capped total.
 No gap filling. Weekends, holidays and index session breaks appear as
 missing rows in the output -- that is correct. A missing bar means the
 market was shut; inventing one invents a price that was never traded.
+
+TIMEZONE FIX (2026-09-17): the previous version of this script labelled
+every MT5 timestamp UTC via datetime.fromtimestamp(t, tz=UTC) without
+converting it. MT5 returns (and expects) times in the trade server's own
+clock, not UTC -- see spec Appendix A.3/A.6. Both the output (stored "time"
+column) and the input (year_bounds request windows) needed converting; see
+FTMO_SERVER_UTC_OFFSET below for the correction and why it can't be a plain
+IANA zone. docs/state.md's CRITICAL section has the full incident writeup.
 
 Prerequisites:
   - MetaTrader 5 terminal is running and logged in
@@ -31,6 +38,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import MetaTrader5 as mt5
 import pyarrow as pa
@@ -62,6 +70,87 @@ EARLIEST_YEAR = 2005
 
 DATA_ROOT = Path("C:/trading/data/raw")
 
+# --- Server timezone: verified 2026-09-17, spec Appendix A.6 ---------------
+
+_NEW_YORK = ZoneInfo("America/New_York")
+
+SERVER_TZ_VERIFIED_DATE = "2026-09-17"
+SERVER_TZ_SOURCE = "https://ftmo.com/en/blog/trading-updates/trading-update-5-mar-2026/"
+SERVER_TZ_CONVENTION = (
+    "GMT+2 in winter, GMT+3 in summer, transitioning on the United States "
+    "daylight-saving calendar rather than the European one. No IANA "
+    "timezone matches this combination."
+)
+
+
+def ftmo_server_utc_offset(reference: datetime) -> timedelta:
+    """The FTMO MT5 server's offset ahead of UTC at a given moment.
+
+    Verified 2026-09-17 from FTMO's own trading updates (see
+    SERVER_TZ_SOURCE): the server clock runs GMT+2 in winter and GMT+3 in
+    summer, but switches on the UNITED STATES daylight-saving calendar, not
+    the European one -- FTMO states plainly that the platform moves to
+    GMT+3 on the US spring-forward date and back to GMT+2 on the US
+    fall-back date, leaving a two-to-three week window each spring and
+    autumn where the server clock and Europe disagree by two hours rather
+    than the usual one.
+
+    This EET-magnitude offset on a US transition calendar corresponds to no
+    real IANA timezone: no geographic region observes GMT+2/+3 on a US DST
+    schedule, so `zoneinfo` cannot be asked for this zone by name. Instead,
+    ask whether America/New_York itself is in daylight time at the
+    reference moment, and derive +3 or +2 from that -- the DST calendar
+    still comes from zoneinfo's own tz database, just the US entry rather
+    than a European one, so a future change to US DST legislation is
+    picked up automatically rather than needing a hand-maintained date
+    table that would be wrong the first time legislation changed.
+
+    `reference` may be naive (an approximate wall-clock reading -- accurate
+    enough to place it on the correct side of a transition, since FTMO
+    itself brackets each transition with a multi-hour trading halt rather
+    than an instantaneous flip; see the verification notes) or UTC-aware
+    (treated exactly).
+    """
+    if reference.tzinfo is None:
+        probe = reference.replace(tzinfo=_NEW_YORK)
+    else:
+        probe = reference.astimezone(_NEW_YORK)
+    is_dst = probe.dst() != timedelta(0)
+    return timedelta(hours=3) if is_dst else timedelta(hours=2)
+
+
+def server_epoch_to_utc(epoch_seconds: int) -> datetime:
+    """MT5 epoch seconds -> true UTC.
+
+    MT5 computes its epoch value by treating the server's own wall-clock
+    reading as if it were UTC, so a plain UTC epoch conversion recovers the
+    server's local digits, not the true instant. Recover those digits as a
+    naive reading, then correct with the verified server offset.
+    """
+    naive_server_reading = datetime.fromtimestamp(epoch_seconds, tz=UTC).replace(tzinfo=None)
+    offset = ftmo_server_utc_offset(naive_server_reading)
+    return (naive_server_reading - offset).replace(tzinfo=UTC)
+
+
+def utc_instant_to_mt5_request(instant_utc: datetime) -> datetime:
+    """The datetime to hand to copy_rates_range() for a desired true-UTC
+    instant.
+
+    MT5 reads only the wall-clock fields of whatever datetime it is given
+    and treats them as server-local, ignoring tzinfo entirely -- this is
+    exactly how the original bug went unnoticed: passing a UTC-labelled
+    datetime was silently honoured as a server-local request. So: compute
+    the server-local wall-clock reading for this UTC instant, then
+    re-attach a UTC label purely so the object stays a valid tz-aware
+    datetime for the API -- the label itself is not read by MT5.
+    """
+    offset = ftmo_server_utc_offset(instant_utc)
+    server_local_reading = (instant_utc + offset).replace(tzinfo=None)
+    return server_local_reading.replace(tzinfo=UTC)
+
+
+# --- Extraction --------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ExtractionJob:
@@ -72,10 +161,10 @@ class ExtractionJob:
     digits: int
 
 
-def year_bounds(year: int) -> tuple[datetime, datetime]:
-    """Half-open [start, end) as a closed range, one second short of the next
-    year, so a bar landing exactly on the year boundary is never fetched
-    twice."""
+def year_bounds_utc(year: int) -> tuple[datetime, datetime]:
+    """True-UTC [start, end] as a closed range, one second short of the
+    next year, so a bar landing exactly on the year boundary is never
+    fetched twice."""
     start = datetime(year, 1, 1, tzinfo=UTC)
     end = datetime(year + 1, 1, 1, tzinfo=UTC) - timedelta(seconds=1)
     return start, end
@@ -92,41 +181,55 @@ def decimal_type_for(digits: int) -> pa.Decimal128Type:
     return pa.decimal128(10 + digits, digits)
 
 
-def fetch_year(broker_symbol: str, mt5_timeframe: int, year: int) -> list[object] | None:
-    """Fetch one year of bars, filtered to that year.
+def fetch_year(
+    broker_symbol: str, mt5_timeframe: int, year: int
+) -> list[tuple[datetime, object]] | None:
+    """Fetch one true-UTC calendar year of bars, filtered to that year.
 
-    copy_rates_range() can return a single bar nearest to the requested
-    window instead of an empty result when no real data exists inside it
-    (observed: a year decades before a symbol's history starts returns the
-    series' very first bar). Filtering to [start, end] turns that into a
-    correct zero rather than a borrowed bar misattributed to the wrong year.
+    Both sides of the MT5 call are converted: the request window is built
+    in true UTC then translated to the server-local reading MT5 expects
+    (utc_instant_to_mt5_request), and every returned row's time is
+    converted back to true UTC (server_epoch_to_utc) before filtering.
+
+    copy_rates_range() can also return a single bar nearest to the
+    requested window instead of an empty result when no real data exists
+    inside it (observed: a year decades before a symbol's history starts
+    returns the series' very first bar). Filtering to [start, end] turns
+    that into a correct zero rather than a borrowed bar misattributed to
+    the wrong year.
     """
-    start, end = year_bounds(year)
-    rates = mt5.copy_rates_range(broker_symbol, mt5_timeframe, start, end)
+    utc_start, utc_end = year_bounds_utc(year)
+    request_start = utc_instant_to_mt5_request(utc_start)
+    request_end = utc_instant_to_mt5_request(utc_end)
+
+    rates = mt5.copy_rates_range(broker_symbol, mt5_timeframe, request_start, request_end)
     if rates is None or len(rates) == 0:
         return None
-    start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
-    in_range = [r for r in rates if start_ts <= int(r["time"]) <= end_ts]
+
+    converted = [(server_epoch_to_utc(int(r["time"])), r) for r in rates]
+    in_range = [(ts, r) for ts, r in converted if utc_start <= ts <= utc_end]
     if not in_range:
         return None
     return in_range
 
 
-def rates_to_table(rates: list[object], digits: int) -> pa.Table:
-    """Store exactly what MT5 returns: bar-open time, OHLC, tick volume,
-    spread and real volume. No derived fields, no gap filling."""
+def rates_to_table(converted_rates: list[tuple[datetime, object]], digits: int) -> pa.Table:
+    """Store exactly what MT5 returns: bar-open time (already corrected to
+    true UTC by the caller), OHLC, tick volume, spread and real volume. No
+    derived fields, no gap filling."""
     dtype = decimal_type_for(digits)
-    times = [datetime.fromtimestamp(int(r["time"]), tz=UTC) for r in rates]
+    times = [ts for ts, _ in converted_rates]
+    rows = [r for _, r in converted_rates]
     return pa.table(
         {
             "time": pa.array(times, type=pa.timestamp("us", tz="UTC")),
-            "open": pa.array([price_to_decimal(r["open"], digits) for r in rates], type=dtype),
-            "high": pa.array([price_to_decimal(r["high"], digits) for r in rates], type=dtype),
-            "low": pa.array([price_to_decimal(r["low"], digits) for r in rates], type=dtype),
-            "close": pa.array([price_to_decimal(r["close"], digits) for r in rates], type=dtype),
-            "tick_volume": pa.array([int(r["tick_volume"]) for r in rates], type=pa.int64()),
-            "spread": pa.array([int(r["spread"]) for r in rates], type=pa.int32()),
-            "real_volume": pa.array([int(r["real_volume"]) for r in rates], type=pa.int64()),
+            "open": pa.array([price_to_decimal(r["open"], digits) for r in rows], type=dtype),
+            "high": pa.array([price_to_decimal(r["high"], digits) for r in rows], type=dtype),
+            "low": pa.array([price_to_decimal(r["low"], digits) for r in rows], type=dtype),
+            "close": pa.array([price_to_decimal(r["close"], digits) for r in rows], type=dtype),
+            "tick_volume": pa.array([int(r["tick_volume"]) for r in rows], type=pa.int64()),
+            "spread": pa.array([int(r["spread"]) for r in rows], type=pa.int32()),
+            "real_volume": pa.array([int(r["real_volume"]) for r in rows], type=pa.int64()),
         }
     )
 
@@ -154,8 +257,8 @@ def extract_job(job: ExtractionJob, force: bool) -> dict:
             count, y_earliest, y_latest = existing_year_bounds(year_path)
             print(f"    {year}  {count:>7,} bars  (on disk, skipped)")
         else:
-            rates = fetch_year(job.broker_symbol, job.mt5_timeframe, year)
-            if rates is None:
+            converted_rates = fetch_year(job.broker_symbol, job.mt5_timeframe, year)
+            if converted_rates is None:
                 # A re-fetch that now correctly finds nothing must not leave
                 # a stale file from an earlier (possibly buggy) run behind.
                 if year_path.exists():
@@ -163,7 +266,7 @@ def extract_job(job: ExtractionJob, force: bool) -> dict:
                 per_year_counts[str(year)] = 0
                 print(f"    {year}  {0:>7,} bars")
                 continue
-            table = rates_to_table(rates, job.digits)
+            table = rates_to_table(converted_rates, job.digits)
             pq.write_table(table, year_path)
             count = table.num_rows
             y_earliest = table.column("time")[0].as_py()
@@ -194,7 +297,9 @@ def write_manifest(out_dir: Path, data: dict, server: str, terminal_build: int) 
     """One manifest per instrument/timeframe, alongside its parquet files.
 
     Per spec §6.5.6's provenance principle -- a number with no record of
-    where it came from can't be checked later.
+    where it came from can't be checked later. server_timezone records the
+    convention this extraction assumed, so a future reader (or a future
+    re-verification) can tell what was believed true and when.
     """
     manifest = {
         "internal_name": data["internal_name"],
@@ -202,6 +307,11 @@ def write_manifest(out_dir: Path, data: dict, server: str, terminal_build: int) 
         "timeframe": data["timeframe"],
         "source_server": server,
         "mt5_terminal_build": terminal_build,
+        "server_timezone": {
+            "convention": SERVER_TZ_CONVENTION,
+            "verified": SERVER_TZ_VERIFIED_DATE,
+            "source": SERVER_TZ_SOURCE,
+        },
         "extracted_at_utc": datetime.now(UTC).isoformat(),
         "earliest_bar_utc": data["earliest_bar_utc"],
         "latest_bar_utc": data["latest_bar_utc"],

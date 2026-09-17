@@ -1,7 +1,9 @@
 # Current State
 
-**Phase:** 1 — in progress. `ReplayFeed` built and unit-tested. **Blocked on
-re-extraction: all stored data is mislabelled — see the CRITICAL section below.**
+**Phase:** 1 — in progress. `Feed` protocol and `ReplayFeed` built, unit-tested and
+memory-bounded. Data re-extracted with the timezone fix. **Not blocked.**
+Remaining for phase 1: the streaming feature pipeline, then the future-shuffle property
+test — which the operator writes, not Claude Code (§7.3).
 **Last session:** 17 September 2026
 
 ## Decided recently
@@ -236,84 +238,180 @@ check, as with the earlier ~100,000-bar reading.
 OHLC are `decimal128(precision = 10 + digits, scale = digits)`, values read back as
 Python `Decimal`. No float exists anywhere in the stored path.
 
-## CRITICAL — stored data is mislabelled. Re-extraction required (2026-09-17)
+## Timezone incident — RESOLVED (2026-09-17)
 
-**Every timestamp in `C:/trading/data/raw/` is wrong.** 1,027,342 bars across 5
-instruments x 3 timeframes. Do not use any of it until re-extracted.
+**Every stored timestamp was wrong for two days.** Found, root-caused, fixed, proven, and
+guarded. Recorded in full because the shape of this failure is the one the project exists
+to prevent, and the lessons are reusable.
 
-### What happened
+### What was wrong
 
 `mt5.copy_rates_range()` returns times in the **broker server's own clock**, not UTC.
-`extract_mt5_data.py` labelled them UTC via `datetime.fromtimestamp(t, tz=UTC)` without
-converting, so every stored timestamp is shifted by the server's offset — and that
-offset is not constant, because the server observes DST.
+`extract_mt5_data.py` labelled them UTC without converting, so every bar was off by two or
+three hours depending on the season.
 
-Caught by `ReplayFeed`'s own future-bar assertion, which refused to yield a bar whose
-`ts_close` was ahead of the wall clock. The first explanation offered was a sandbox
-clock artifact. It was not. **A cheap explanation for a guardrail firing is exactly the
-thing to distrust.**
+Two compounding factors made it worse than a simple shift:
 
-### The second, worse half of the bug
+- **The request side was wrong too.** `year_bounds()` passed UTC windows *into* MT5, which
+  read them as server-local. So year files were bucketed by server-local year. Fixing only
+  the output would have left bars near each Dec 31 boundary filed under the wrong year —
+  where `ReplayFeed` picks files by `range(start.year, end.year + 1)` and would never look.
+  Missing, not wrong. A harder failure to notice.
+- **Spec Appendix A.3 said "MT5 returns UTC."** The extraction was built against a
+  specification error. Corrected in 3.6, with the admission left in the text.
 
-`extract_mt5_data.py`'s `year_bounds()` also passes `datetime(year, 1, 1, tzinfo=UTC)`
-*into* `copy_rates_range` — and MT5 interprets input in server-local terms too. So the
-year files are bucketed by server-local calendar year, not UTC.
+### How it was caught, and the lesson
 
-Fixing only the output labelling would leave bars near each Dec 31 / Jan 1 boundary
-filed under the wrong year. `ReplayFeed._bars_in_range` picks files by
-`range(start.year, end.year + 1)`, so those bars would become **invisible** to a query
-for the year they actually belong to. Missing, not wrong — a harder failure to notice.
+`ReplayFeed`'s own future-bar assertion refused to yield a bar whose `ts_close` was ahead
+of the wall clock. The first explanation offered was a sandbox clock artifact — plausible,
+cheap, and wrong.
 
-Both sides of every call need converting.
+**A cheap explanation for a guardrail firing is the thing to distrust.** The assertion was
+added as routine defensiveness and it caught a real defect that no test was looking for.
 
-### Server timezone — VERIFIED 2026-09-17, from FTMO's own trading updates
+Note also: on a machine whose local timezone happens to match the broker's, the two traps
+(MT5's server time, Python's local-shift on construction) cancel out. The bug would have
+been invisible in exactly the setup most likely to introduce it.
 
-**GMT+2 in winter, GMT+3 in summer, transitioning on the UNITED STATES DST calendar.**
+### The verified facts
 
-FTMO states this explicitly: the platform moves to GMT+3 on the US spring-forward date
-and back to GMT+2 on the US fall-back date, not the European ones. In 2022 Europe's DST
-ended on 30 October but FTMO's platform time did not change until 6 November.
-Source: `ftmo.com/en/blog/trading-updates/`
+**Server clock — GMT+2 winter, GMT+3 summer, on the UNITED STATES DST calendar.**
+FTMO states this directly: the platform moves to GMT+3 on the US spring-forward date and
+back on the US fall-back date, not the European ones. In 2022 Europe's DST ended 30 October
+but the platform did not change until 6 November.
+Source: `ftmo.com/en/blog/trading-updates/trading-update-5-mar-2026/`, verified 2026-09-17.
 
-EET-magnitude offsets on a US transition calendar corresponds to **no IANA timezone** —
-no region observes it. It is a broker configuration choice, common among MT4/MT5
-brokers, made to keep the weekly candle boundary stable against the New York session.
+EET-magnitude offsets on a US transition calendar match **no IANA timezone** — no region
+observes it. It is a broker configuration choice, keeping the weekly candle boundary stable
+against the New York session.
 
-Implement it by asking `zoneinfo` whether `America/New_York` is in daylight time at the
-instant in question, then applying +3 or +2. The DST calendar still comes from the
-library — just the US one. A hand-written table of transition dates would need
-maintaining forever and would be wrong the first time legislation changed.
+Implemented by asking `zoneinfo` whether `America/New_York` is in daylight time at that
+instant, then applying +3 or +2. The DST calendar still comes from the library — just the
+US one. A hand-written date table would need maintaining forever and would be wrong the
+first time legislation changed.
 
-### Accounting day — VERIFIED 2026-09-17, same source
-
-**Midnight Prague time, European calendar.** FTMO monitors the Max Daily Loss in Prague
-time and the daily drawdown resets at midnight there. Closes two `UNVERIFIED` markers in
-`config/ftmo_2step.yaml`.
+**Accounting day — midnight Prague, European calendar.** Same source. Closes two
+`UNVERIFIED` markers in `config/ftmo_2step.yaml`.
 
 **These are two different clocks and must stay separate.** For two to three weeks each
-spring and autumn the US and EU calendars diverge and the offset between the server
-clock and Prague is two hours rather than one. A single combined offset is correct most
-of the year and silently wrong exactly when it matters.
+spring and autumn the calendars diverge and the offset between them is two hours rather
+than one. A single combined offset is correct most of the year and silently wrong exactly
+when it matters.
 
-### Still to do
+**The transition moment is not ambiguous.** FTMO halts trading between 07:00 GMT+2 and
+11:00 GMT+3 on the transition Sunday, which brackets the US switch instant. No bar exists
+in the ambiguous window, so every stored bar falls unambiguously on one side. The
+"few bars might be off by an hour" risk does not materialise.
 
-1. Fix `extract_mt5_data.py` — both the output labelling and the request windows.
-2. Delete and re-extract from scratch. Not a surgical fix: relabelling would still leave
-   the year-bucketing wrong, and re-extraction took only minutes.
-3. Add `server_timezone` and its verification date to each extraction manifest (6.5.6).
-4. Re-run the `ReplayFeed` unit tests against corrected data.
-5. Sanity-check the corrected timestamps against a known market fact — FX closes Friday
-   17:00 New York, so the weekly gap should start at 21:00 or 22:00 UTC depending on US
-   DST. That is the check that proves the conversion, not that it runs.
+### How the fix was proven
 
-Spec corrected to 3.6: A.3 no longer claims MT5 returns UTC; A.6 records the verified
-server convention.
+Not by the code running. By an external fact: **FX closes Friday 17:00 New York**, which is
+22:00 UTC in US winter and 21:00 UTC in US summer.
+
+Corrected data shows weekly gaps starting at exactly 22:00 in January and exactly 21:00 in
+July. That does not line up by luck.
+
+### Re-extraction — and an open question about the numbers
+
+Deleted `C:/trading/data/raw/` and re-extracted from scratch rather than relabelling, since
+the year-bucketing was wrong too.
+
+**The bar counts jumped roughly five-fold.** EURUSD M15 went from 100,026 bars (4 years)
+to 537,995 (21 years, back to 2005). A few hours of relabelling does not multiply a count
+fivefold.
+
+The likely explanation is the terminal's local history cache deepening across the session's
+many queries — the same effect behind the earlier suspicious ~100,000 readings. **This is a
+hypothesis, not a finding.** Consequences worth holding:
+
+- The earlier "~100k cap" may never have been FTMO's limit at all. It may have been the
+  local cache.
+- A future extraction might deepen again. Do not treat current depths as final.
+- Record depth from the manifest at the time of use, not from memory.
+
+Current M15 depths: NAS100 122,844 (2017-12-28), US500 122,853 (2017-12-28),
+EURUSD 537,995 (2005-01-02), XAUUSD 502,714 (2005-01-02), XAGUSD 417,905 (2008-11-07).
+
+### Two guards built, so this cannot recur silently
+
+**1. Market-fact regression test** — `tests/unit/test_ftmo_server_timezone.py`, with a 4KB
+fixture of 48 real bars at `tests/unit/fixtures/ftmo_timezone/`. Asserts the weekly close
+lands at 22:00 UTC in winter and 21:00 UTC in summer. Runs on every push, including CI.
+
+If FTMO changes its server convention and the data is re-extracted without the conversion
+being updated, this goes red on its own. It checks against a physical fact FTMO cannot
+change, not against a claim FTMO makes about itself.
+
+**Proven able to fail:** the fixture timestamps were shifted by an hour, both assertions
+failed on exactly that hour, then reverted.
+
+Fixture deliberately lives in `tests/unit/fixtures/`, not `tests/golden/`. §7.4 golden
+replays pin down *engine behaviour* against expected outputs; this checks *data
+correctness* and would exist before any engine code. Keeping them apart preserves what
+`tests/golden/` is for.
+
+**2. Shared provenance check** — `src/engine/core/provenance.py`. One definition of "what
+counts as verified", used by both `load_account_constraints()` and `ReplayFeed`. Warns when
+a verification date is missing, when a source is missing, or when the date is older than 90
+days.
+
+Each extraction manifest now records `server_timezone` — the convention assumed, the
+verification date, and the source URL — so a future reader can see what was believed and
+when.
+
+Side effect worth noting: **`fundednext_stellar_2step` now warns on load.** It carries a
+verification date with no source URL, and was previously silent. A date with no source
+behind it is not a verification.
+
+### Standing habit
+
+FTMO publishes trading updates before each DST change. Worth a glance in March and October.
+But the market-fact test is what catches it if that is forgotten — and it will be.
+
+## ReplayFeed memory — bounded (2026-09-17)
+
+`stream()` previously materialised every bar of every touched year before yielding the
+first. Against the re-extracted data that measured 53.5s and 407MB peak for EURUSD M15
+full history — roughly 5x the earlier measurement, tracking the data growth.
+
+Now streams via `ParquetFile.iter_batches()`, yielding as it goes.
+
+**The property proven is constancy, not improvement:**
+
+| Range | Bars | Python-heap peak |
+|---|---|---|
+| 1 year | 24,956 | 3.31 MB |
+| 21 years | 537,879 | 3.49 MB |
+
+Flat across a 21x difference in bar count. That is what makes phase 5 viable — hundreds of
+parallel backtests would otherwise have scaled memory linearly with concurrency.
+
+Fidelity checked by hashing the full bar sequence for EURUSD M15 2024 before and after:
+identical. All 11 existing `ReplayFeed` tests passed unchanged, poison-file test included.
+
+`bars.sort()` removed. Rows within a year are already time-ordered and years are read in
+order, so the sort was redundant — and the inline monotonicity check catches a violation by
+*raising* rather than silently reordering. §2.2 states strictly ascending as a contract; a
+feed that quietly sorts a malformed file hides a data defect instead of surfacing it.
+
+**Wall time barely moved** — 53.5s to 51.9s. The bottleneck is I/O and per-`Bar` validation,
+not list building. 52s per full-history run times hundreds of phase 5 runs is still hours.
+Separate problem, probably `Decimal`. Not yet addressed.
 
 ## Carried forward — known gaps, not blocking
 
-- **Provenance hole (§6.5.6).** A profile with `rules_verified` set but `rules_source`
-  null loads without warning. FundedNext's profile is currently in exactly that state.
-  Fix when the constraint code is written in phase 4.
+- ~~**Provenance hole (§6.5.6).**~~ **Fixed 2026-09-17** via `src/engine/core/provenance.py`.
+  A date with no source now warns, same as no date at all.
+- **`warmup()` reads a whole year file** to return `n` bars — ~2s and ~25MB for `n=200`,
+  because it constructs a `Bar` for every row then slices the tail. Deliberately not fixed
+  alongside the `stream()` refactor: its cost is bounded by one year regardless of `n` or
+  range length, so it lacks the unbounded-growth property that justified that change, and a
+  proper fix needs reverse row-group iteration — a different and more intricate change.
+  Bundling it would have widened the blast radius of a refactor whose value was being narrow
+  and provable. Worth its own task.
+- **Full-history streaming takes ~52s** for EURUSD M15. Memory is now flat but wall time is
+  not, and phase 5 runs hundreds of backtests. Likely `Decimal` arithmetic and per-`Bar`
+  validation. Measure before optimising.
 - **`realised_fill` backfill is documented, not enforced.** Nothing prevents
   constructing a record with it already set, or replacing other fields alongside it.
   Matters at phase 7, when there is a real write path.
@@ -324,14 +422,21 @@ server convention.
 
 ## Next
 
-1. **Phase 1.** Feed protocol, `ReplayFeed`, streaming feature pipeline.
-   Exit criterion: the §7.3 future-shuffle property test passes — shuffling the future
-   portion of a dataset never changes decisions already made.
+1. **Phase 1, remaining work.**
 
-   Note: that exit criterion is a **property test**, and §7.3 requires those to be
-   hand-written by the operator rather than generated from the same specification as
-   the implementation. This is the first phase where the known gap in §5 of
-   `operator-context.md` becomes load-bearing rather than theoretical.
+   | | Task | Who |
+   |---|---|---|
+   | 1.1 | `Feed` protocol, `ReplayFeed` | done |
+   | 1.2 | Streaming feature pipeline (§2.3) | Claude Code |
+   | 1.3 | Future-shuffle property test + red-team mutant check | **the operator** |
+
+   Exit criterion: shuffling the future portion of a dataset never changes decisions
+   already made, **and** a deliberately leaky indicator makes that test fail. The second
+   half matters as much as the first — a harness that cannot detect a known leak proves
+   nothing about an unknown one.
+
+   1.3 is where §7.3 stops being theoretical. The test must come from a second, independent
+   reading of the spec, or it only confirms the implementation agrees with itself.
 
 2. Bar interval: **M15, settled 2026-09-15**. §10 item 3 closed.
 

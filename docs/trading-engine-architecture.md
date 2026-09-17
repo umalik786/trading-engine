@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
+**Version:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
+**Previous:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
 **Previous:** 3.4 — records the no-gap-fill rule for stored data (B.6)
 **Previous:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
 **Previous:** 3.2 — FTMO automation position, server limits and simulated-venue status verified from primary sources (§10, §6.5.9)
@@ -32,7 +33,7 @@ here, the citation is wrong — say so rather than working around it.
 **12.** Research workflow and the TradingView boundary
 **13.** Deferred: LLM advisory layer
 
-**Appendix A** — MT5 broker adapter (primary): A.1 shape · A.2 runtime requirements · A.3 capabilities used · A.4 reconciliation · A.5 idempotency · A.6 broker-specific configuration · A.7 no push streaming
+**Appendix A** — MT5 broker adapter (primary): A.1 shape · A.2 runtime requirements · A.3 capabilities used (includes the server-time correction) · A.4 reconciliation · A.5 idempotency · A.6 broker-specific configuration (includes FTMO's verified server timezone) · A.7 no push streaming
 **Appendix B** — OANDA v20 broker adapter (second implementation): B.1 why this venue · B.2 environments · B.3 endpoints · B.4 reconciliation using transaction IDs · B.5 instrument mapping · B.6 trading hours (includes the no-gap-fill rule for stored data)
 **Appendix C** — Cost model for leveraged instruments: C.1 components · C.2 spread ceiling in the risk gate · C.3 margin close-out as a risk input · C.4 validating the model
 
@@ -804,7 +805,11 @@ The official `MetaTrader5` Python package communicates with a running `terminal6
 
 Tick data returns named `time`, `bid`, `ask`, `last` and `flags` columns at millisecond precision, which is better raw material for the cost model than bid/ask candles: the spread distribution in §C.1 can be fitted from observed ticks rather than inferred from aggregates.
 
-**Time zones.** MT5 returns UTC, but Python's `datetime` applies a local shift on construction and printing. Construct all datetimes explicitly in UTC. This is a documented and frequently-hit trap.
+**Time zones. MT5 does not return UTC.** Earlier versions of this document said it did; that was wrong, and the extraction built against it mislabelled every stored timestamp. `copy_rates_range`, `copy_ticks_range` and `symbol_info_tick` all return values in the **trade server's own clock**, not UTC, and the same applies to datetimes passed *into* those calls — a request window built in UTC is interpreted as server-local, so both sides of every call need converting.
+
+Treat the returned value as a naive datetime in the server's timezone, convert it to UTC explicitly, and never label it UTC without converting. The server's zone is broker-specific configuration (A.6), not a constant, and it is verified per broker rather than assumed.
+
+Python's `datetime` additionally applies a local shift on construction and printing, so construct all datetimes explicitly rather than relying on defaults. Both traps are live at once, and they can cancel out on a machine whose local zone happens to match the server's — which makes the bug invisible in exactly the place it is most likely to be introduced.
 
 ### A.4 Reconciliation
 
@@ -832,6 +837,16 @@ Note the mitigating property from §5.2: because the architecture is target-posi
 Symbol names vary by broker (`XAUUSD`, `XAUUSD.m`, `GOLD`). Contract size, volume step, minimum volume, digits, margin requirement and swap rates all come from `symbol_info()` at startup, and every order is validated against them before submission. All of this lives in adapter configuration and never leaks into strategy code.
 
 **Historical depth is a per-broker unknown.** MT5 serves history from the broker's server, and depth varies from months to years. Verify before committing (§10).
+
+**Server timezone is per-broker configuration and must be verified, not assumed.** See the time-zone note in A.3. The adapter config records the server's UTC offset and which DST calendar it follows, together with the date and source of that verification, per the provenance rule in §6.5.6.
+
+**Verified for FTMO, 2026-09-17.** The MT5 server runs **GMT+2 in winter and GMT+3 in summer, transitioning on the United States daylight-time calendar** — not the European one. FTMO's own trading updates state this explicitly: the platform switches to GMT+3 on the US spring-forward date, and back to GMT+2 on the US fall-back date, leaving a two-to-three week window each spring and autumn in which the offset between the server clock and European time is two hours rather than the usual one. Source: `ftmo.com/en/blog/trading-updates/`.
+
+This combination — EET-magnitude offsets on a US transition calendar — corresponds to no IANA timezone, because no geographic region observes it. It is a broker configuration choice, common among MT4/MT5 brokers, made to keep the weekly candle boundary stable relative to the New York session.
+
+It should nonetheless not be implemented as a hand-written table of transition dates. Determine whether `America/New_York` is in daylight time at the instant in question and apply +3 or +2 accordingly: the DST calendar still comes from the library, it is simply the US one rather than a European one. A hardcoded date table would need maintaining forever and would be wrong the first time legislation changed.
+
+**The accounting-day boundary of §6.5 is a different clock and must stay separate.** FTMO monitors the Max Daily Loss in Prague time and resets it at midnight there, on the European calendar. Collapsing the two clocks into a single offset produces correct results for most of the year and silently wrong ones during the weeks when the calendars diverge.
 
 ### A.7 No push streaming
 

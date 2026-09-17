@@ -1,7 +1,8 @@
 # Current State
 
-**Phase:** 0 — COMPLETE, exit criterion met. Phase 1 not started.
-**Last session:** 15 September 2026
+**Phase:** 1 — in progress. `ReplayFeed` built and unit-tested. **Blocked on
+re-extraction: all stored data is mislabelled — see the CRITICAL section below.**
+**Last session:** 17 September 2026
 
 ## Decided recently
 
@@ -234,6 +235,79 @@ check, as with the earlier ~100,000-bar reading.
 **Stored types verified on a real file:** `time` is `timestamp[us, tz=UTC]`,
 OHLC are `decimal128(precision = 10 + digits, scale = digits)`, values read back as
 Python `Decimal`. No float exists anywhere in the stored path.
+
+## CRITICAL — stored data is mislabelled. Re-extraction required (2026-09-17)
+
+**Every timestamp in `C:/trading/data/raw/` is wrong.** 1,027,342 bars across 5
+instruments x 3 timeframes. Do not use any of it until re-extracted.
+
+### What happened
+
+`mt5.copy_rates_range()` returns times in the **broker server's own clock**, not UTC.
+`extract_mt5_data.py` labelled them UTC via `datetime.fromtimestamp(t, tz=UTC)` without
+converting, so every stored timestamp is shifted by the server's offset — and that
+offset is not constant, because the server observes DST.
+
+Caught by `ReplayFeed`'s own future-bar assertion, which refused to yield a bar whose
+`ts_close` was ahead of the wall clock. The first explanation offered was a sandbox
+clock artifact. It was not. **A cheap explanation for a guardrail firing is exactly the
+thing to distrust.**
+
+### The second, worse half of the bug
+
+`extract_mt5_data.py`'s `year_bounds()` also passes `datetime(year, 1, 1, tzinfo=UTC)`
+*into* `copy_rates_range` — and MT5 interprets input in server-local terms too. So the
+year files are bucketed by server-local calendar year, not UTC.
+
+Fixing only the output labelling would leave bars near each Dec 31 / Jan 1 boundary
+filed under the wrong year. `ReplayFeed._bars_in_range` picks files by
+`range(start.year, end.year + 1)`, so those bars would become **invisible** to a query
+for the year they actually belong to. Missing, not wrong — a harder failure to notice.
+
+Both sides of every call need converting.
+
+### Server timezone — VERIFIED 2026-09-17, from FTMO's own trading updates
+
+**GMT+2 in winter, GMT+3 in summer, transitioning on the UNITED STATES DST calendar.**
+
+FTMO states this explicitly: the platform moves to GMT+3 on the US spring-forward date
+and back to GMT+2 on the US fall-back date, not the European ones. In 2022 Europe's DST
+ended on 30 October but FTMO's platform time did not change until 6 November.
+Source: `ftmo.com/en/blog/trading-updates/`
+
+EET-magnitude offsets on a US transition calendar corresponds to **no IANA timezone** —
+no region observes it. It is a broker configuration choice, common among MT4/MT5
+brokers, made to keep the weekly candle boundary stable against the New York session.
+
+Implement it by asking `zoneinfo` whether `America/New_York` is in daylight time at the
+instant in question, then applying +3 or +2. The DST calendar still comes from the
+library — just the US one. A hand-written table of transition dates would need
+maintaining forever and would be wrong the first time legislation changed.
+
+### Accounting day — VERIFIED 2026-09-17, same source
+
+**Midnight Prague time, European calendar.** FTMO monitors the Max Daily Loss in Prague
+time and the daily drawdown resets at midnight there. Closes two `UNVERIFIED` markers in
+`config/ftmo_2step.yaml`.
+
+**These are two different clocks and must stay separate.** For two to three weeks each
+spring and autumn the US and EU calendars diverge and the offset between the server
+clock and Prague is two hours rather than one. A single combined offset is correct most
+of the year and silently wrong exactly when it matters.
+
+### Still to do
+
+1. Fix `extract_mt5_data.py` — both the output labelling and the request windows.
+2. Delete and re-extract from scratch. Not a surgical fix: relabelling would still leave
+   the year-bucketing wrong, and re-extraction took only minutes.
+3. Add `server_timezone` and its verification date to each extraction manifest (6.5.6).
+4. Re-run the `ReplayFeed` unit tests against corrected data.
+5. Sanity-check the corrected timestamps against a known market fact — FX closes Friday
+   17:00 New York, so the weekly gap should start at 21:00 or 22:00 UTC depending on US
+   DST. That is the check that proves the conversion, not that it runs.
+
+Spec corrected to 3.6: A.3 no longer claims MT5 returns UTC; A.6 records the verified
+server convention.
 
 ## Carried forward — known gaps, not blocking
 

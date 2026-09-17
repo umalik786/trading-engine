@@ -1,36 +1,48 @@
 # FTMO 2-Step Challenge.
 #
-# NOT YET VERIFIED against FTMO's own rulebook. docs/state.md confirms FTMO
-# permits algorithmic trading with no account-size ceiling and no
-# stop-loss requirement, but does not record FTMO's loss-limit percentages,
-# accounting-day boundary, or drawdown mode -- see docs/state.md, "Open, not
-# blocking": "read FTMO's trading objectives page" is still outstanding.
+# The accounting-day block below is VERIFIED from FTMO's own trading updates
+# (2026-09-17). The loss percentages are NOT — they remain commonly-cited
+# placeholders and must be confirmed against FTMO's trading objectives page
+# before this profile is used for a real evaluation.
 #
-# Every figure below is a commonly-cited placeholder, NOT sourced from
-# FTMO's own rulebook page, and rules_verified/rules_source are left unset
-# so this profile cannot be mistaken for a checked one (§6.5.6). Replace
-# before using this profile for a real evaluation.
+# rules_verified is deliberately left unset while the loss figures are
+# unverified, so the profile continues to warn at load (spec 6.5.6). It is
+# not "verified" until every number in it has a primary source.
 account_constraints:
   profile: ftmo_2step
 
+  # Where the accounting-day facts came from. Distinct from rules_source,
+  # which is reserved for the loss percentages and is still null.
+  accounting_day_source: "https://ftmo.com/en/blog/trading-updates/"
+  accounting_day_verified: "2026-09-17"
+
   accounting_day:
-    reset_time: "00:00"  # UNVERIFIED -- placeholder
-    timezone: "Europe/Prague"  # UNVERIFIED -- placeholder, FTMO's accounting-day timezone not yet confirmed
+    # VERIFIED 2026-09-17. FTMO states across successive trading updates that
+    # the Max Daily Loss is monitored in Prague time and the daily drawdown
+    # resets at midnight there.
+    reset_time: "00:00"
+    timezone: "Europe/Prague"
+    #
+    # NOTE — this is NOT the same clock as the MT5 server's. The server runs
+    # GMT+2/+3 on the *United States* DST calendar (see spec Appendix A.6);
+    # the accounting day runs on the *European* one. For two to three weeks
+    # each spring and autumn the two calendars diverge and the offset between
+    # them is two hours rather than one. They must be converted separately.
+    # A single combined offset is correct most of the year and silently wrong
+    # exactly when it matters.
 
   daily_loss:
     external_pct: 5.0  # UNVERIFIED -- commonly-cited placeholder, not confirmed against FTMO's own rulebook
-    internal_pct: 3.0  # UNVERIFIED -- 60% of the (unverified) external figure, per §6.5.4's placeholder rule
-    measured_on: equity  # UNVERIFIED -- placeholder, FTMO's measurement basis not yet confirmed
-    # FTMO recalculates the daily limit against each day's opening balance,
-    # not the initial balance -- structurally different from FundedNext.
-    # UNVERIFIED -- placeholder, not yet confirmed against FTMO's own rulebook
+    internal_pct: 3.0  # UNVERIFIED -- 60% of the (unverified) external figure, per 6.5.4's placeholder rule
+    measured_on: equity  # UNVERIFIED -- FTMO's measurement basis not yet confirmed
+    # UNVERIFIED -- FTMO recalculates the daily limit against each day's
+    # opening balance rather than the initial balance, unlike FundedNext's
+    # static anchor. Confirm before use.
     anchor: day_open_balance
 
   max_loss:
     external_pct: 10.0  # UNVERIFIED -- commonly-cited placeholder, not confirmed against FTMO's own rulebook
-    internal_pct: 6.0  # UNVERIFIED -- 60% of the (unverified) external figure, per §6.5.4's placeholder rule
-    # FTMO's maximum loss trails the highest balance at the accounting-day
-    # boundary, rather than staying anchored to the initial balance --
-    # structurally different from FundedNext's static drawdown.
-    # UNVERIFIED -- placeholder, not yet confirmed against FTMO's own rulebook
+    internal_pct: 6.0  # UNVERIFIED -- 60% of the (unverified) external figure, per 6.5.4's placeholder rule
+    # UNVERIFIED -- FTMO's floor trails from the highest balance recorded at
+    # the accounting-day boundary, unlike FundedNext's static floor.
     mode: trailing_eod

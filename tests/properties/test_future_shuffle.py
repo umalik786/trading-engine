@@ -1,3 +1,47 @@
+"""Future-shuffle property test -- DRAFT ONLY.
+
+SPEC (the operator's own, implemented exactly as given):
+
+Data: XAUUSD M15, C:/trading/data/raw/XAUUSD/M15/2026.parquet. Start at
+the first bar on or after 2026-01-01, take the next 1000 bars in order.
+
+Clean indicator: the REAL `SimpleMovingAverage(period=50)` from
+engine.features.technical -- not a standalone stand-in. The point of this
+test is whether the engine's actual shipped feature pipeline can peek; a
+class written inside this draft would trivially not peek, and proving
+that would prove nothing about the real one. Whether the SMA's *values*
+are correct is a separate, already-covered question (the hand-calculated
+tests in test_technical_features.py); this test only asks whether it
+peeks. Bars with fewer than 50 behind them: `snapshot()["sma_50"]` is
+`None` (SimpleMovingAverage's own convention).
+
+Leaky indicator: handed the full 1000-bar list at construction. At bar N,
+averages closes of bars N+1 .. N+50 from that list -- the *next* 50 bars,
+which update() has not reached yet. Deliberately acausal. Returns `None`
+when fewer than 50 bars are ahead, matching SimpleMovingAverage's
+convention so both indicators behave alike at the boundary (moot for bars
+1-500 of a 1000-bar set -- every window here has 50 bars ahead of it).
+
+For each indicator: two fresh instances, no state shared between them.
+  Instance A: all 1000 bars fed in original order.
+  Instance B: bars 1-500 in the same order, bars 501-1000 shuffled with a
+              fixed seed.
+Record snapshot() after each of the first 500 update() calls on both
+instances.
+
+Expected:
+  Clean -- all 500 recorded snapshots identical between A and B.
+  Leaky -- snapshots 1-450 identical, 451-500 differ (all 50, not just
+           "at least one" -- the stricter claim, kept deliberately).
+
+Exact Decimal equality throughout, not approximate. Guarded against an
+empty comparison silently passing at every comparison point.
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import random

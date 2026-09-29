@@ -33,6 +33,10 @@
   `check_margin_mode.py` reading `account_info()` on FTMO-Demo, FTMO Global Markets
   Ltd. Support chat said the same; recorded as supporting evidence only — the
   account's own report is the source.
+- **FundedNext position mode: HEDGING** (`margin_mode` 2). Verified 2026-09-29 via
+  `check_margin_mode.py` reading `account_info()` on FundedNext-Server 3, FundedNext
+  Ltd. Both candidate venues are therefore hedging; netting is still built in phase 3
+  for venue independence and for the cross-convention property test.
 - **Position mode is venue configuration, never an engine assumption.** Both
   conventions get built at the start of phase 3, together: netting (average cost, one
   net position per symbol) and hedging (per-ticket, each fill its own position). Built
@@ -144,8 +148,6 @@ matches among the 50 differing snapshots.
 
 ## Open items
 
-- FundedNext position mode: unverified. Run `check_margin_mode.py` logged in to
-  FundedNext.
 - Partial-close cost split: resolved by per-ticket accounting in phase 3 for hedging
   venues; average cost stays for netting.
 

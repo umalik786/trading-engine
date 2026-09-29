@@ -1,0 +1,41 @@
+# Per-instrument specifications.
+#
+# Spec Appendix A.6: contract size, volume step, digits, margin and swap
+# rates are broker facts read from symbol_info() at startup and held in
+# adapter configuration. They never belong in Python source -- 100 is the
+# right multiplier for XAUUSD on this venue and the wrong one on the next,
+# and a wrong multiplier scales every P&L figure the system reports
+# without any test noticing.
+#
+# contract_size is the multiplier that turns a price move into money:
+#
+#     P&L = lots x contract_size x price change
+#
+# A 1-lot long in XAUUSD that rises 2.50 makes 2.50 x 100 = 250.00.
+#
+# Symbol keys are this project's internal names -- the same ones
+# extract_mt5_data.py writes into C:\trading\data (NAS100, US500, EURUSD,
+# XAUUSD, XAGUSD). They are not the broker's own symbol strings
+# (US100.cash and so on), which stay in adapter configuration.
+#
+# VERIFIED 2026-09-11, read from symbol_info() on the live account.
+# Source: C:\trading\data\mt5-verification-2026-09-11.json
+#
+# Appendix A.6 still requires these to be read from symbol_info() at
+# startup and every order validated against them before submission. A
+# verified figure records what the broker reported on one day; it does not
+# stop the broker changing it.
+#
+# Write whole numbers unquoted. Quote anything with a decimal point
+# ("0.01") so it is parsed as exact text rather than through a float.
+instruments:
+  NAS100:
+    contract_size: 1
+  US500:
+    contract_size: 1
+  EURUSD:
+    contract_size: 100000
+  XAUUSD:
+    contract_size: 100
+  XAGUSD:
+    contract_size: 5000

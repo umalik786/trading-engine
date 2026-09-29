@@ -1,9 +1,101 @@
 # Current State
 
-**Phase:** 1 — complete
-**Last session:** 2026-09-28
+**Phase:** 2 — built, exit criterion not yet measured
+**Last session:** 2026-09-29
 
-## Decided recently
+## Decided this session (phase 2)
+
+- Built: `Strategy` protocol, `AlwaysLong`, `AlwaysFlat`, `Portfolio`/`PortfolioView`,
+  `Broker` protocol, `SimBroker`, `CostModel` protocol, `ZeroCostModel`, and
+  `config/instruments.yaml` with its loader.
+- **No `core/engine.py` was written, deliberately.** The bar loop lives in
+  `tests/golden/harness.py` instead. Reason: a backtest fills a queued order when the
+  next bar arrives (`SimBroker.fill_pending`), whereas live fills are discovered by
+  polling deal history against a durable intent log (Appendix A.4/A.5/A.7). An
+  orchestrator written today around `fill_pending(bar)` would work for one wiring
+  only, which is the separate backtester P1 forbids. Delete the harness rather than
+  extend it when the real orchestrator arrives.
+- **`Fill.quantity` is signed** — positive bought, negative sold. §2.1's `Fill` has no
+  `side` field, so the sign is the only place direction can live. `SimBroker` writes
+  it from the order's side; a live adapter must do the same.
+- **`client_order_id` is composed as text, not `hash()`.** §5.2 says
+  `hash(strategy_name, symbol, bar.ts_close, intent_index)`, but Python's `hash()` on
+  strings is salted per process, so it would give different ids on identical runs and
+  break determinism outright. Same four inputs, joined with colons.
+- **SimBroker and the engine share one `Portfolio`.** In a backtest there is no second
+  system that could disagree, so separate copies would invent a drift that cannot
+  occur here while hiding the one that can. §5.3 reconciliation is the live answer.
+- Contract sizes are config (`config/instruments.yaml`), with no default: an unknown
+  symbol raises at the first fill rather than guessing a multiplier that would scale
+  every P&L figure silently. Verified 2026-09-11 from `symbol_info()`, source recorded
+  in the file.
+- **FTMO position mode: HEDGING** (`margin_mode` 2). Verified 2026-09-29 via
+  `check_margin_mode.py` reading `account_info()` on FTMO-Demo, FTMO Global Markets
+  Ltd. Support chat said the same; recorded as supporting evidence only — the
+  account's own report is the source.
+- **Position mode is venue configuration, never an engine assumption.** Both
+  conventions get built at the start of phase 3, together: netting (average cost, one
+  net position per symbol) and hedging (per-ticket, each fill its own position). Built
+  together because persisted state differs in shape between them, and adding a field to
+  persisted state later means migrating a running system — the same reasoning that put
+  both risk floor modes in at once. The engine never deliberately hedges: one direction
+  per symbol under either convention. Close order under hedging is oldest ticket first.
+  The adapter asserts the configured mode against `account_info()` at startup and halts
+  on mismatch. Property test: both conventions produce identical equity and total P&L
+  for any fill sequence.
+- **FTMO trial accounts expire.** "Unlimited free trials" means unlimited *new* trials,
+  not an account that lasts indefinitely. Data re-extraction therefore needs a live
+  trial at the time it runs and expects a new login each time; extraction credentials
+  are not stable between runs.
+
+## Fixed after review (phase 2)
+
+- **Order sizing counts pending orders, not just filled lots.** Found in chat-side review.
+  With one instrument the fault is invisible — each bar fills the previous bar's order
+  before the strategy is asked again. With two instruments interleaved, a bar for one
+  symbol cannot fill the other's pending order, so the book looked flat and the whole
+  position was ordered again under a new `client_order_id` — a new intent, not a retry,
+  so §5.2 idempotency did not catch it. Observed before the fix: 2 orders, 2 fills,
+  then the oversized position provoked corrective sells and invented 2000.00 of
+  realised P&L from a strategy that never sells.
+- **The ledger stores total cost, not average price.** Found in chat-side review. A
+  weighted average divides, and `Decimal` rounds a non-terminating quotient at context
+  precision: 1 lot at 2000.00 plus 2 at 2001.00, marked 2005.00, reported
+  1299.999999999999999999999900 instead of 1300.00. `Position` now holds signed
+  `cost` (sum of lots x price) and P&L is add/subtract/multiply only.
+  `Position.avg_price` survives as a derived property for reporting, explicitly out of
+  the accounting path.
+- One division remains, on partial closes only: allocating cost basis between lots
+  closed and lots kept is proportional. Its rounding cancels in equity, because the
+  position keeps `cost` minus exactly the share that was removed, so only the
+  realised/unrealised split can differ in the last digits. FIFO tranches would remove
+  even that, at the cost of changing what average price means — not taken, since it
+  changes an accounting convention rather than fixing an error.
+  Superseded for hedging venues: per-ticket accounting in phase 3 removes this
+  division — see the position-mode decision above.
+
+## Verified, not assumed (phase 2)
+
+Three deliberate breaks, each reverted:
+
+1. `ZeroCostModel.fill_price` returning `bar.close` instead of `bar.open` → 4 broker
+   tests red, including both next-bar-open tests.
+2. Dropping `contract_size` from the realised-P&L line → 5 portfolio tests red.
+3. `AlwaysFlat` targeting 1 lot instead of 0 → all 3 AlwaysFlat tests red.
+
+Harness run over a four-bar XAUUSD series spanning a weekend: one order, decided at
+bar 1's close, filled at bar 2's open (2002.00), held across the gap, marked at bar 4's
+close (2015.50). 1 x 100 x 13.50 = 1350.00, which is what it reported.
+
+## Blocked on (phase 2)
+
+- The exit criterion itself. `tests/golden/test_always_long_vs_buy_and_hold.py` has an
+  empty `CASES` list and one deliberately failing test saying so. It needs the
+  operator's hand-made fixture CSV plus the independently computed expected P&L, and
+  the real M15 week with the Excel figure. Nothing in this repository computes
+  buy-and-hold, by design.
+
+## Decided previously (phase 1)
 
 - Phase 1.3 (future-shuffle property test) complete and committed at
   `tests/properties/test_future_shuffle.py`. Hand-typed by the operator from a
@@ -23,7 +115,7 @@
   (how many snapshots are compared), `PERIOD` (indicator window). They were one
   constant, `SPLIT`, doing all three jobs.
 
-## Found this session
+## Found in phase 1
 
 - **`SPLIT` was overloaded and hid a failed break test.** With one constant serving
   as shuffle start, record count and boundary position, changing it to 900 moved all
@@ -37,7 +129,7 @@
   passes. This is a real limit on what phase 1 proves, recorded in the test's
   docstring.
 
-## Verified, not assumed
+## Verified, not assumed (phase 1)
 
 The harness was proven able to fail, two independent ways:
 
@@ -50,20 +142,47 @@ Both reverted. Boundary values under normal settings: leaky bar 450 identical in
 runs (4468.3494), bar 451 first to differ (4468.8124 vs 4471.1652), no coincidental
 matches among the 50 differing snapshots.
 
-## Blocked on
+## Open items
 
-- Nothing
+- FundedNext position mode: unverified. Run `check_margin_mode.py` logged in to
+  FundedNext.
+- Partial-close cost split: resolved by per-ticket accounting in phase 3 for hedging
+  venues; average cost stays for netting.
 
 ## Next
 
-- Phase 2: strategy protocol, `AlwaysLong` / `AlwaysFlat`, portfolio accounting,
-  `SimBroker` with `ZeroCostModel`.
-- Exit criterion: `AlwaysLong` matches buy-and-hold to the cent.
-- Use Opus for this phase — `project-alignment.md` §8 flags phases 2 and 3 as the
-  ones where being subtly wrong is most expensive.
+- Supply the fixture CSV and the independently computed expected P&L, register them as
+  a `Case`, and watch the exit-criterion test go green. Then the real M15 week with the
+  Excel figure, as a second case.
+- Only then phase 3: cost model and sizer. Exit criterion is the same comparison minus
+  a cost figure derivable by hand — the harness already takes a `cost_model` argument
+  for it.
 
 ## Carried-forward gaps (not blocking)
 
+- **The real orchestrator (`core/engine.py`) must be designed before phase 4.** The
+  risk gate sits inside the bar loop — it vets each order between sizing and
+  submission — so phase 4 cannot be built without deciding where that loop lives. The
+  harness in `tests/golden/harness.py` must not be grown into it: a loop that only
+  works against `SimBroker.fill_pending(bar)` is a second backtester, which is what P1
+  forbids. Design the orchestrator and the live fill path together, then delete the
+  harness.
+- **Content-perturbation property test not written — before phase 5, operator-written.**
+  The future-shuffle test catches order-sensitive leaks only (see "Found in phase 1").
+  Perturbing the *contents* of the post-boundary bars, rather than their order, would
+  also catch order-invariant leaks — `max`, `min`, `sum` over a whole dataset return
+  the same value under a shuffle and pass today. Scale open/high/low/close together or
+  `Bar` validation rejects the perturbed bars.
+- No decision log is written during a run. `DecisionRecord` exists from phase 0 but
+  nothing populates it; the harness does not, since it is not the orchestrator. It
+  needs wiring wherever the real bar loop ends up.
+- `financing()` is defined on `CostModel` and returns zero, but nothing calls it —
+  there is no per-bar financing step in the loop yet. Phase 3.
+- Nothing validates `strategy.required_features` against what the feature pipeline
+  actually provides. §2.4 says the engine should check this at startup; there is no
+  engine to do it in yet, and both reference strategies declare no features.
+- Multi-symbol runs are untested end to end. The accounting is per-symbol throughout
+  and the harness loop handles a list of targets, but every test uses one instrument.
 - `warmup()` reads a whole year file to return `n` bars (~2s, ~25MB at n=200).
 - Full-history streaming ~52s wall time; phase 5 runs hundreds of backtests.
 - Decimal context is process-global and mutable, not recorded in the run manifest —

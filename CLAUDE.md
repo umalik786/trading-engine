@@ -41,9 +41,9 @@ These are design principles from the spec, restated here because they are the on
 
 ## Current state
 
-**Phase: 0 — repo skeleton, core types, config loading, decision log schema.**
+**Phase: 2 — strategy protocol, `AlwaysLong` / `AlwaysFlat`, portfolio accounting, `SimBroker` with `ZeroCostModel`.**
 
-Exit criterion: config round-trips; the manifest records commit and config hash; a decision log entry captures full context.
+Exit criterion: `AlwaysLong` matches buy-and-hold to the cent, against a fixture and an expected figure the operator computes independently.
 
 See `docs/state.md` for anything more recent than this line.
 

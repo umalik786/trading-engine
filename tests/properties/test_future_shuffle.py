@@ -1,41 +1,20 @@
-"""Future-shuffle property test -- DRAFT ONLY.
+"""Future-shuffle property test.
 
-SPEC (the operator's own, implemented exactly as given):
+1000 bars runs twice; first 500 bars identical on both run, 501-1000 shuffled in the 2nd.
+values should be identical, if differ, that means it read data that wasnt given.
 
-Data: XAUUSD M15, C:/trading/data/raw/XAUUSD/M15/2026.parquet. Start at
-the first bar on or after 2026-01-01, take the next 1000 bars in order.
+Limitation: The shuffled bars contains the same content but the order is shuffled. If indicator 
+reaches for values that are not dependent on order, for example, min, max, sum of the whole dataset
+then same answer will be shown on both and the real leak would slip through. 
 
-Clean indicator: the REAL `SimpleMovingAverage(period=50)` from
-engine.features.technical -- not a standalone stand-in. The point of this
-test is whether the engine's actual shipped feature pipeline can peek; a
-class written inside this draft would trivially not peek, and proving
-that would prove nothing about the real one. Whether the SMA's *values*
-are correct is a separate, already-covered question (the hand-calculated
-tests in test_technical_features.py); this test only asks whether it
-peeks. Bars with fewer than 50 behind them: `snapshot()["sma_50"]` is
-`None` (SimpleMovingAverage's own convention).
+Verified-by: There were two break tests, one was to reverse the probe's slice to look backward, 
+and the other to move SHUFFLE_FROM to 900. They both turned red on leaky indicator. 
+The clean test stayed green through both break tests.
 
-Leaky indicator: handed the full 1000-bar list at construction. At bar N,
-averages closes of bars N+1 .. N+50 from that list -- the *next* 50 bars,
-which update() has not reached yet. Deliberately acausal. Returns `None`
-when fewer than 50 bars are ahead, matching SimpleMovingAverage's
-convention so both indicators behave alike at the boundary (moot for bars
-1-500 of a 1000-bar set -- every window here has 50 bars ahead of it).
 
-For each indicator: two fresh instances, no state shared between them.
-  Instance A: all 1000 bars fed in original order.
-  Instance B: bars 1-500 in the same order, bars 501-1000 shuffled with a
-              fixed seed.
-Record snapshot() after each of the first 500 update() calls on both
-instances.
+If this fails: failure means indicator is reading ahead - and where the values start to diverge is 
+where the leak starts.
 
-Expected:
-  Clean -- all 500 recorded snapshots identical between A and B.
-  Leaky -- snapshots 1-450 identical, 451-500 differ (all 50, not just
-           "at least one" -- the stricter claim, kept deliberately).
-
-Exact Decimal equality throughout, not approximate. Guarded against an
-empty comparison silently passing at every comparison point.
 """
 
 

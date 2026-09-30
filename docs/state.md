@@ -60,10 +60,16 @@
 - **Position mode is venue configuration, never an engine assumption.** Both
   conventions get built at the start of phase 3, together: netting (average cost, one
   net position per symbol) and hedging (per-ticket, each fill its own position). Built
-  together because persisted state differs in shape between them, and adding a field to
-  persisted state later means migrating a running system — the same reasoning that put
-  both risk floor modes in at once. The engine never deliberately hedges: one direction
-  per symbol under either convention. Close order under hedging is oldest ticket first.
+  together because the cross-convention property test (identical equity and total P&L
+  for any fill sequence) is what proves the accounting, and it needs both to exist. The
+  earlier reason given — that persisted state differs in shape, so adding one later
+  means a migration — was overstated: under §5.1 the broker is authoritative for
+  positions, so on restart much of the per-ticket record can be rebuilt from
+  `positions_get()`. What the engine must persist itself (intent-to-ticket links, close
+  order, realised P&L history for balance-anchored limits) is the first phase 3 design
+  question, to be settled before any code. The engine never deliberately hedges: one
+  direction per symbol under either convention. Close order under hedging is oldest
+  ticket first.
   The adapter asserts the configured mode against `account_info()` at startup and halts
   on mismatch. Property test: both conventions produce identical equity and total P&L
   for any fill sequence.
@@ -177,8 +183,9 @@ matches among the 50 differing snapshots.
 ## Next
 
 - Phase 3, starting with both position conventions — netting and hedging — per the
-  position-mode decision above. They go in together because persisted state differs in
-  shape between them.
+  position-mode decision above. They go in together because the cross-convention
+  property test needs both to exist; see the corrected rationale in that decision, and
+  settle what the engine must persist itself before writing any code.
 - Then the cost model and sizer. The exit criterion is the same comparison minus a cost
   figure derivable by hand; the harness already takes a `cost_model` argument. Check it
   against the 02:45-start fixture, which is the one that can fail for the right reason.

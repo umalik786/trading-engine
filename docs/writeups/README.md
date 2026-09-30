@@ -38,3 +38,5 @@ Phases before that are written up on the same schedule and held.
 One Markdown file per phase, named for the phase and its subject, e.g.
 `phase-3-costs-and-sizing.md`. A phase whose write-up is still outstanding is simply
 absent from this directory.
+
+Phases 0–2 are combined in `phases-0-2.md`; one file per phase from phase 3.

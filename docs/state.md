@@ -182,6 +182,10 @@ matches among the 50 differing snapshots.
 - Then the cost model and sizer. The exit criterion is the same comparison minus a cost
   figure derivable by hand; the harness already takes a `cost_model` argument. Check it
   against the 02:45-start fixture, which is the one that can fail for the right reason.
+  Watch for spread double-counting: charged at entry and again when marking the open
+  position. A single round-number cost figure passes either way. The phase 3
+  exit-criterion fixtures must be designed to separate the two, e.g. two fixtures with
+  different bar counts, with the operator's hand-computed cost figure for each.
 
 ## Carried-forward gaps (not blocking)
 

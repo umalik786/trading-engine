@@ -55,29 +55,27 @@
   account's own report is the source.
 - **FundedNext position mode: HEDGING** (`margin_mode` 2). Verified 2026-09-29 via
   `check_margin_mode.py` reading `account_info()` on FundedNext-Server 3, FundedNext
-  Ltd. Both candidate venues are therefore hedging; netting is still built in phase 3
-  for venue independence and for the cross-convention property test.
+  Ltd. Both candidate venues are therefore hedging; netting is still built, for venue
+  independence and for the cross-convention property test.
 - **Position mode is venue configuration, never an engine assumption.** Both
-  conventions get built at the start of phase 3, together: netting (average cost, one
-  net position per symbol) and hedging (per-ticket, each fill its own position). Built
-  together because the cross-convention property test (identical equity and total P&L
-  for any fill sequence) is what proves the accounting, and it needs both to exist. The
-  earlier reason given — that persisted state differs in shape, so adding one later
-  means a migration — was overstated: under §5.1 the broker is authoritative for
+  conventions get built together, as a step between phase 3 and phase 4: netting
+  (average cost, one net position per symbol) and hedging (per-ticket, each fill its own
+  position). Built together because the cross-convention property test (identical equity
+  and total P&L for any fill sequence) is what proves the accounting, and it needs both
+  to exist. The earlier reason given — that persisted state differs in shape, so adding
+  one later means a migration — was overstated: under §5.1 the broker is authoritative for
   positions, so on restart much of the per-ticket record can be rebuilt from
   `positions_get()`. What the engine must persist itself (intent-to-ticket links, close
-  order, realised P&L history for balance-anchored limits) is the first phase 3 design
-  question, to be settled before any code. The engine never deliberately hedges: one
+  order, realised P&L history for balance-anchored limits) is the first design question
+  of that step, to be settled before any code. The engine never deliberately hedges: one
   direction per symbol under either convention. Close order under hedging is oldest
-  ticket first.
-  The adapter asserts the configured mode against `account_info()` at startup and halts
-  on mismatch. Property test: both conventions produce identical equity and total P&L
-  for any fill sequence.
-- **Partial-close cost split: decided.** Per-ticket accounting in phase 3 removes the
-  division for hedging venues, which both candidate venues are. Average cost stays for
-  netting, where the division remains and is bounded as described under "Fixed after
-  review" — the rounding cancels in equity and can only move the realised/unrealised
-  split.
+  ticket first. The adapter asserts the configured mode against `account_info()` at
+  startup and halts on mismatch.
+- **Partial-close cost split: decided.** Per-ticket accounting, in the step before
+  phase 4, removes the division for hedging venues, which both candidate venues are.
+  Average cost stays for netting, where the division remains and is bounded as described
+  under "Fixed after review" — the rounding cancels in equity and can only move the
+  realised/unrealised split.
 - **FTMO trial accounts expire.** "Unlimited free trials" means unlimited *new* trials,
   not an account that lasts indefinitely. Data re-extraction therefore needs a live
   trial at the time it runs and expects a new login each time; extraction credentials
@@ -182,17 +180,22 @@ matches among the 50 differing snapshots.
 
 ## Next
 
-- Phase 3, starting with both position conventions — netting and hedging — per the
-  position-mode decision above. They go in together because the cross-convention
-  property test needs both to exist; see the corrected rationale in that decision, and
-  settle what the engine must persist itself before writing any code.
-- Then the cost model and sizer. The exit criterion is the same comparison minus a cost
-  figure derivable by hand; the harness already takes a `cost_model` argument. Check it
+- **Phase 3 — the spec's phase 3 (§9): cost model (spread, commission, slippage) and
+  sizer.** Exit criterion: `AlwaysLong` matches buy-and-hold minus a cost figure the
+  operator derives by hand. The harness already takes a `cost_model` argument. Check it
   against the 02:45-start fixture, which is the one that can fail for the right reason.
   Watch for spread double-counting: charged at entry and again when marking the open
   position. A single round-number cost figure passes either way. The phase 3
   exit-criterion fixtures must be designed to separate the two, e.g. two fixtures with
   different bar counts, with the operator's hand-computed cost figure for each.
+- **Then position conventions — netting and hedging — as a step after phase 3 and before
+  phase 4**, per the position-mode decision above, including the persistence question:
+  what the engine must record itself when the broker is authoritative for positions.
+  Exit: the cross-convention property test, operator-written.
+  Why between the two rather than inside phase 3: costs apply per fill identically under
+  both conventions, and `AlwaysLong` never partially closes, so phase 3's exit criterion
+  does not depend on which convention is in force. Phase 4's does — firm loss limits
+  anchor to balance, and the convention decides how realised P&L feeds it.
 
 ## Carried-forward gaps (not blocking)
 
@@ -209,6 +212,9 @@ matches among the 50 differing snapshots.
   also catch order-invariant leaks — `max`, `min`, `sum` over a whole dataset return
   the same value under a shuffle and pass today. Scale open/high/low/close together or
   `Bar` validation rejects the perturbed bars.
+- Licence decision — before any public posting (LinkedIn etc.). Options: restrictive
+  source-available (e.g. PolyForm Noncommercial / BSL) vs private repo. Check no LICENSE
+  file exists meanwhile; default is all rights reserved. Take IP advice if productising.
 - No decision log is written during a run. `DecisionRecord` exists from phase 0 but
   nothing populates it; the harness does not, since it is not the orchestrator. It
   needs wiring wherever the real bar loop ends up.

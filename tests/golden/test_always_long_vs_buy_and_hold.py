@@ -76,6 +76,18 @@ class Case:
 
 CASES: list[Case] = [
     # Operator: add cases here. See the module docstring above.
+        Case(
+        fixture="xauusd_m15_2025-02-05T0245_2025-02-12.csv",
+        symbol="XAUUSD",
+        lots=Decimal("1"),
+        expected_pnl=Decimal("4740.00"),
+    ),
+    Case(
+        fixture="xauusd_m15_2025-02-05_2025-02-12.csv",
+        symbol="XAUUSD",
+        lots=Decimal("1"),
+        expected_pnl=Decimal("5718.00"),
+    ),
 ]
 
 

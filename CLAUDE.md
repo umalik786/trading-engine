@@ -41,9 +41,11 @@ These are design principles from the spec, restated here because they are the on
 
 ## Current state
 
-**Phase: 2 — strategy protocol, `AlwaysLong` / `AlwaysFlat`, portfolio accounting, `SimBroker` with `ZeroCostModel`.**
+**Phase: 2 — complete (2026-09-30). Phase 3 is next: cost model and sizer, beginning with both position conventions (netting and hedging).**
 
-Exit criterion: `AlwaysLong` matches buy-and-hold to the cent, against a fixture and an expected figure the operator computes independently.
+Exit criterion met: `AlwaysLong` matched operator-computed buy-and-hold to the cent on two real XAUUSD M15 weeks, 5718.00 and 4740.00, both figures computed independently before the engine was run.
+
+Note for any future fixture: only the 02:45-start fixture distinguishes filling at the next bar's open from filling at the deciding bar's close. In the 00:00-start fixture those two rules give the same answer, so it passes either way. A fixture must be checked for whether it can tell correct behaviour from the bug it exists to catch — see `docs/state.md`.
 
 See `docs/state.md` for anything more recent than this line.
 

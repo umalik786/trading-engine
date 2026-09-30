@@ -1,7 +1,27 @@
 # Current State
 
-**Phase:** 2 — built, exit criterion not yet measured
-**Last session:** 2026-09-29
+**Phase:** 2 — COMPLETE (2026-09-30)
+**Last session:** 2026-09-30
+
+## Phase 2 exit criterion — MET 2026-09-30
+
+- `AlwaysLong` matched operator-computed buy-and-hold to the cent on two real XAUUSD
+  M15 weeks: **5718.00** and **4740.00**. Both figures were computed independently in a
+  spreadsheet before the engine was run, not read off it afterwards.
+- **The 00:00-start fixture cannot distinguish the correct behaviour from the bug it
+  exists to catch.** In `xauusd_m15_2025-02-05_2025-02-12.csv`, bar 2's open equals
+  bar 1's close, so filling at the next bar's open and filling at the deciding bar's
+  close give the identical entry price and the identical P&L. That fixture passes under
+  either rule.
+- **The 02:45-start fixture can.** There bar 1's close is 2851.10 and bar 2's open is
+  2851.19, so the two rules diverge. Proven by registering the look-ahead figure
+  4749.00: the test went red with difference exactly -9.00, which is
+  1 lot x 100 x 0.09 — the gap between the two candidate entry prices, and nothing else.
+- **Lesson: a fixture has to be checked for whether it can tell correct behaviour from
+  the bug it exists to catch, not only for whether it passes.** Both fixtures pass.
+  Only one of them is evidence. The green from the 00:00 fixture was indistinguishable
+  from the green a look-ahead engine would have produced, and on its own it would have
+  certified the accounting on a test that could not fail for the right reason.
 
 ## Decided this session (phase 2)
 
@@ -47,6 +67,11 @@
   The adapter asserts the configured mode against `account_info()` at startup and halts
   on mismatch. Property test: both conventions produce identical equity and total P&L
   for any fill sequence.
+- **Partial-close cost split: decided.** Per-ticket accounting in phase 3 removes the
+  division for hedging venues, which both candidate venues are. Average cost stays for
+  netting, where the division remains and is bounded as described under "Fixed after
+  review" — the rounding cancels in equity and can only move the realised/unrealised
+  split.
 - **FTMO trial accounts expire.** "Unlimited free trials" means unlimited *new* trials,
   not an account that lasts indefinitely. Data re-extraction therefore needs a live
   trial at the time it runs and expects a new login each time; extraction credentials
@@ -93,11 +118,10 @@ close (2015.50). 1 x 100 x 13.50 = 1350.00, which is what it reported.
 
 ## Blocked on (phase 2)
 
-- The exit criterion itself. `tests/golden/test_always_long_vs_buy_and_hold.py` has an
-  empty `CASES` list and one deliberately failing test saying so. It needs the
-  operator's hand-made fixture CSV plus the independently computed expected P&L, and
-  the real M15 week with the Excel figure. Nothing in this repository computes
-  buy-and-hold, by design.
+- Nothing. The exit criterion was the last item and is met — see the section at the top
+  of this file. Two cases are registered in
+  `tests/golden/test_always_long_vs_buy_and_hold.py`. Nothing in this repository
+  computes buy-and-hold; both expected figures came from outside it, by design.
 
 ## Decided previously (phase 1)
 
@@ -148,17 +172,16 @@ matches among the 50 differing snapshots.
 
 ## Open items
 
-- Partial-close cost split: resolved by per-ticket accounting in phase 3 for hedging
-  venues; average cost stays for netting.
+- Nothing open.
 
 ## Next
 
-- Supply the fixture CSV and the independently computed expected P&L, register them as
-  a `Case`, and watch the exit-criterion test go green. Then the real M15 week with the
-  Excel figure, as a second case.
-- Only then phase 3: cost model and sizer. Exit criterion is the same comparison minus
-  a cost figure derivable by hand — the harness already takes a `cost_model` argument
-  for it.
+- Phase 3, starting with both position conventions — netting and hedging — per the
+  position-mode decision above. They go in together because persisted state differs in
+  shape between them.
+- Then the cost model and sizer. The exit criterion is the same comparison minus a cost
+  figure derivable by hand; the harness already takes a `cost_model` argument. Check it
+  against the 02:45-start fixture, which is the one that can fail for the right reason.
 
 ## Carried-forward gaps (not blocking)
 

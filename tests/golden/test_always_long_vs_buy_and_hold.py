@@ -19,7 +19,7 @@ Put the CSV in `tests/golden/fixtures/`, then add one `Case(...)` to
         fixture="xauusd_handmade.csv",   # file in tests/golden/fixtures/
         symbol="XAUUSD",                 # key in config/instruments.yaml
         lots=Decimal("1"),
-        expected_pnl=Decimal("250.00"),  # your figure, computed independently
+        expected_pnl=Decimal("YOUR_FIGURE"),  # your figure, computed independently
     )
 
 The CSV header is, exactly:

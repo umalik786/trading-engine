@@ -22,6 +22,11 @@
   Only one of them is evidence. The green from the 00:00 fixture was indistinguishable
   from the green a look-ahead engine would have produced, and on its own it would have
   certified the accounting on a test that could not fail for the right reason.
+- **Addendum 2026-10-01: AlwaysShort added** (missing from spec §7.1). Matched
+  operator-computed figure -4740.00 on the 02:45 fixture; the look-ahead figure
+  -4749.00 turned it red with difference +9.00 — opposite sign to the long case, as
+  expected. First end-to-end proof of the sell path: sell order, negative fill and cost,
+  valuation against a rising price.
 
 ## Decided this session (phase 2)
 
@@ -188,6 +193,11 @@ matches among the 50 differing snapshots.
   position. A single round-number cost figure passes either way. The phase 3
   exit-criterion fixtures must be designed to separate the two, e.g. two fixtures with
   different bar counts, with the operator's hand-computed cost figure for each.
+  Phase 3 exit includes AlwaysShort with spread, not just AlwaysLong. MT5 bars are
+  normally bid-based, so a long pays spread on entry and a short pays it in its
+  valuation while open; a cost model that only adds spread to buys passes AlwaysLong and
+  overstates every short. Verify FTMO bars are bid-based, and check whether extraction
+  kept copy_rates' per-bar spread column.
 - **Then position conventions — netting and hedging — as a step after phase 3 and before
   phase 4**, per the position-mode decision above, including the persistence question:
   what the engine must record itself when the broker is authoritative for positions.

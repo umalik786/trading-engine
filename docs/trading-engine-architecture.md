@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
+**Version:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
+**Previous:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
 **Previous:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
 **Previous:** 3.4 — records the no-gap-fill rule for stored data (B.6)
 **Previous:** 3.3 — `strategies/user/` clarified as a placeholder; real strategies load from a separately installed private package (§3)
@@ -603,6 +604,7 @@ Because any strategy can be plugged in, plug in strategies whose correct behavio
 | Strategy | Expected result | Catches |
 |---|---|---|
 | `AlwaysLong` | Matches buy-and-hold minus modelled costs, within tolerance | Accounting errors, cost double-counting, missed bars |
+| `AlwaysShort` | Mirror of buy-and-hold minus modelled costs | Sell-side accounting, sign errors, direction-dependent cost bugs |
 | `AlwaysFlat` | Exactly zero P&L, zero orders | Phantom trades, state leakage |
 | `PerfectForesight` (peeks at next bar — test only) | Enormous, near-monotonic returns | If it *doesn't* win big, the engine is broken |
 | `RandomEntry` (seeded) | Distribution centred slightly below zero after costs | Gives you the null distribution |

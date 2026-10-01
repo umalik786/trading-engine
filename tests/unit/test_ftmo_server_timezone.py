@@ -29,6 +29,7 @@ CI has no access to C:/trading/data/.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def _weekly_gap_close(year: int, month: int) -> datetime:
         timeframe="M15",
         range_start=datetime(year, month, 5, tzinfo=UTC),
         range_end=datetime(year, month, 9, tzinfo=UTC),
+        point=Decimal("0.00001"),  # EURUSD; required, and unused by this test
         data_root=FIXTURE_ROOT,
     )
     bars = list(feed.stream())

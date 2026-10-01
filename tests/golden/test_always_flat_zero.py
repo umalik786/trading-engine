@@ -44,6 +44,7 @@ def _bars() -> list[Bar]:
                 close=price,
                 volume=Decimal(1),
                 is_final=True,
+                spread=Decimal("0.20"),
             )
         )
     return bars

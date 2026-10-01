@@ -1,7 +1,68 @@
 # Current State
 
-**Phase:** 2 — COMPLETE (2026-09-30)
-**Last session:** 2026-09-30
+**Phase:** 3a — COMPLETE (2026-10-01). Phase 2 complete 2026-09-30.
+**Last session:** 2026-10-01
+
+## Phase 3a exit criterion — MET 2026-10-01
+
+Scope was spread and commission mechanics only. Financing, slippage, the statistical
+spread model of Appendix C.1 and a real sizer are 3b/3c; the position conventions are
+the step after. Slippage is zero but wired and exercised, not absent.
+
+- `AlwaysLong` and `AlwaysShort` matched operator-computed figures to the cent on a new
+  XAUUSD M15 window: **3078.50** and **-3135.50**. Both computed by hand before the
+  engine was run. The failure message deliberately withholds the engine's own figure,
+  so a future figure cannot be transcribed instead of derived.
+- Cost profile for the test: bid basis, commission 3.50 per lot per side, slippage zero.
+  The bid basis is an assumption OF THE TEST, not a claim about FTMO.
+- **New fixture, `xauusd_m15_2025-02-05T2145_2025-02-12.csv`.** The phase 2 fixtures
+  could not be reused: in both of them the deciding bar and the fill bar happen to carry
+  the same spread, so a spread taken from the wrong bar changes nothing. That is the
+  phase 2 lesson one layer down — the fixture that caught the fill-PRICE bug cannot
+  catch the fill-SPREAD bug. The new window carries 0.64 / 0.27 / 0.23 on the deciding,
+  fill and last bars, all distinct. A test guards that property so a future re-export
+  cannot quietly lose it.
+- The fill bar is 23:00, not 22:00: the 21:45 bar is the last before gold's daily
+  session break, so the order fills at the next bar that EXISTS, an hour and a quarter
+  later. The window exercises the session gap as well as the spread.
+- **Design: one side-aware rule, used twice.** `CostModel.executable_price(side, bar,
+  reference_price)` answers "if I traded this direction now, at what price?"
+  `fill_price` wraps it with `bar.open`; valuation calls it with `bar.close` once per
+  direction. Fills and valuation therefore cannot drift apart. Recorded as spec v3.8,
+  along with `Bar.spread` in price units.
+- `Portfolio.mark()` now takes `ExitPrices(long_exit, short_exit)` and picks by the sign
+  of the position it holds. The ledger stays ignorant of spread, basis and venue; the
+  caller asks the cost model for both candidates.
+
+### Breaks run, 2026-10-01 — every move predicted before running, every one exact
+
+| Break | Long | Short | Note |
+|---|---|---|---|
+| Spread from the deciding bar, not the fill bar | **-37.00** | **0.00** | 1 x 100 x (0.64 - 0.27) |
+| Sell also pays the spread (double count) | **-23.00** | **-27.00** | long's extra lands on the last bar, short's on the fill bar |
+| Short valued at close, not close + spread | **0.00** | **+23.00** | flattering: the short looks better |
+| Commission dropped | **+3.50** | **+3.50** | caught by the `fees` assertion before the P&L one |
+| Spread charged every bar held (additive) | **-8074.00** | **-8074.00** | 372 bars held, spreads summing to 80.74 |
+
+Three findings from the breaks that matter more than the arithmetic:
+
+- **Break 1 is invisible on the short.** On a bid basis a sell pays no spread at the
+  fill, so which bar's spread is read changes nothing for `AlwaysShort`. Only the long
+  can catch a wrong-bar spread. Under a mid basis both would. One reference strategy
+  would not have been enough.
+- **Break 3 is invisible on the long**, and it is the flattering direction — it makes a
+  short look better than it is. Breaks 1 and 3 are each caught by exactly one of the two
+  strategies, in opposite directions. Neither alone is sufficient coverage.
+- **Break 5 took the phase 2 tests down too**, because the per-bar charge sat in the
+  shared harness loop rather than in the cost model, so it charged runs using
+  `ZeroCostModel`. A cost bug placed in the loop contaminates every wiring; placed in
+  the cost model it stays where it belongs. An argument for the orchestrator keeping
+  costs strictly behind the `CostModel` seam.
+
+`git diff src/` is NOT empty after the breaks, and cannot be: the six modified files are
+the phase 3a implementation itself, still uncommitted. Absence of break residue was
+verified instead by SHA-256 of all 38 files under `src/` against a snapshot taken before
+the first break — identical.
 
 ## Phase 2 exit criterion — MET 2026-09-30
 
@@ -209,6 +270,26 @@ matches among the 50 differing snapshots.
 
 ## Carried-forward gaps (not blocking)
 
+- **The FTMO cost profile's `price_basis` must be verified before any FTMO backtest is
+  believed.** MT5 records which price a symbol's bars are built from as
+  `symbol_info().chart_mode` (0 = bid, 1 = last), and the 2026-09-11 verification run
+  did not capture it. `config/cost_ftmo_demo.yaml` says `bid`, which is an assumption,
+  not a finding — the file warns at load because `rules_verified` is unset. The basis
+  decides which side of a trade pays the spread, so getting it wrong charges the short
+  instead of the long: plausible on every chart, wrong on every trade. The phase 3a
+  test profile also uses a bid basis, but there it is an assumption *of the test*,
+  chosen so a figure can be computed by hand, and makes no claim about FTMO.
+- **`per_lot_round_turn` commission over-charges a closing fill.** Per the phase 3a
+  decision it charges the full round turn at entry — pessimistic, and common broker
+  practice. But `fees()` cannot tell an entry from an exit, so it charges the full round
+  turn on *every* fill, and a strategy that closes a position pays twice. That is
+  correct for the reference strategies, which only ever enter, and wrong for anything
+  else. Telling the two apart needs position state, and §2.8 hands `fees()` only the
+  order and the fill price, so this cannot be fixed without either widening that
+  signature or moving commission out of the cost model. Resolve it with the
+  position-conventions step, where open-versus-close becomes explicit per ticket. Until
+  then, do not evaluate any strategy that closes positions on a `per_lot_round_turn`
+  profile. The shipped FTMO placeholder uses `per_lot_per_side`, which is unaffected.
 - **The real orchestrator (`core/engine.py`) must be designed before phase 4.** The
   risk gate sits inside the bar loop — it vets each order between sizing and
   submission — so phase 4 cannot be built without deciding where that loop lives. The

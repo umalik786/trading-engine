@@ -69,6 +69,40 @@ from engine.core.types import Fill, require_decimal
 
 
 @dataclass(frozen=True)
+class ExitPrices:
+    """The two prices at which a position in one symbol could be closed.
+
+    A long exits by selling and a short by buying, so on any venue with a
+    spread those are two different prices. The ledger knows which way it
+    is positioned; it does not know what a spread is, which side of it
+    each direction pays, or what venue it is trading on. So the caller --
+    the engine loop -- computes both candidates from the cost model and
+    hands them over, and the ledger picks by the sign of what it holds.
+
+    Two named fields rather than two bare `Decimal` arguments, because two
+    prices in a row are exactly the kind of pair that gets passed the
+    wrong way round, and the resulting error is a plausible-looking P&L.
+    """
+
+    long_exit: Decimal
+    short_exit: Decimal
+
+    def __post_init__(self) -> None:
+        require_decimal("long_exit", self.long_exit)
+        require_decimal("short_exit", self.short_exit)
+
+    @classmethod
+    def unadjusted(cls, price: Decimal) -> ExitPrices:
+        """Both sides at the same price -- no spread, no side. Used where a
+        single quoted price is all that exists."""
+        return cls(long_exit=price, short_exit=price)
+
+    def for_quantity(self, quantity: Decimal) -> Decimal:
+        """The exit price that applies to a signed position."""
+        return self.long_exit if quantity > 0 else self.short_exit
+
+
+@dataclass(frozen=True)
 class Position:
     """One open position in one symbol.
 
@@ -151,7 +185,7 @@ class Portfolio:
         self._starting_balance = starting_balance
         self._contract_sizes = dict(contract_sizes)
         self._positions: dict[str, Position] = {}
-        self._marks: dict[str, Decimal] = {}
+        self._marks: dict[str, ExitPrices] = {}
         self._realised_pnl = Decimal(0)
 
     @property
@@ -176,7 +210,8 @@ class Portfolio:
         """P&L of open positions at their last mark price."""
         total = Decimal(0)
         for symbol, position in self._positions.items():
-            value_now = position.quantity * self._marks[symbol]
+            exit_price = self._marks[symbol].for_quantity(position.quantity)
+            value_now = position.quantity * exit_price
             total += (value_now - position.cost) * self._contract_size(symbol)
         return total
 
@@ -187,17 +222,23 @@ class Portfolio:
     def positions(self) -> Mapping[str, Position]:
         return dict(self._positions)
 
-    def mark(self, symbol: str, price: Decimal) -> None:
-        """Set the price at which open lots in `symbol` are valued.
+    def mark(self, symbol: str, prices: ExitPrices) -> None:
+        """Set the prices at which open lots in `symbol` are valued.
 
-        The engine calls this as each bar closes, with that bar's close.
-        Unrealised P&L, and therefore equity, move only when this is
-        called: there is no implicit notion of "the current price"
-        anywhere in the engine, because a component that could ask for one
-        could ask at the wrong time.
+        The engine calls this as each bar closes, having asked the cost
+        model what a long and a short could each exit at. Unrealised P&L,
+        and therefore equity, move only when this is called: there is no
+        implicit notion of "the current price" anywhere in the engine,
+        because a component that could ask for one could ask at the wrong
+        time.
         """
-        require_decimal("price", price)
-        self._marks[symbol] = price
+        if not isinstance(prices, ExitPrices):
+            raise TypeError(
+                f"mark() takes an ExitPrices, got {type(prices).__name__}. A position's "
+                "exit price depends on its direction; pass both candidates, or "
+                "ExitPrices.unadjusted(price) where there is only one quoted price."
+            )
+        self._marks[symbol] = prices
 
     def apply_fill(self, fill: Fill) -> None:
         """Apply one fill to the ledger.
@@ -251,7 +292,14 @@ class Portfolio:
             )
 
         self._realised_pnl -= fill.fees
-        self._marks[fill.symbol] = fill.price
+        # A provisional mark, so that an open position always has a price
+        # to be valued at. It is the fill's own price on both sides, which
+        # ignores the spread -- and that is fine only because the engine
+        # loop marks properly from the same bar immediately afterwards,
+        # before anything reads equity. The invariant being protected is
+        # that a position can never exist unmarked; see the module
+        # docstring.
+        self._marks[fill.symbol] = ExitPrices.unadjusted(fill.price)
 
         if new_quantity == 0:
             del self._positions[fill.symbol]

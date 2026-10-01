@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
+**Version:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
+**Previous:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
 **Previous:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
 **Previous:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
 **Previous:** 3.4 — records the no-gap-fill rule for stored data (B.6)
@@ -112,6 +113,11 @@ class Bar:
     close: Decimal
     volume: Decimal
     is_final: bool         # False for in-progress bars; strategies see finals only
+    spread: Decimal        # v3.8. PRICE units, never points. Converted at the
+                           # adapter from the instrument's configured point size,
+                           # so nothing above the adapter knows what a point is.
+                           # Zero passes through; the cost model decides whether a
+                           # zero means "no spread" or "not recorded"
 
 @dataclass(frozen=True)
 class TargetPosition:
@@ -261,8 +267,23 @@ class Broker(Protocol):
 
 ```python
 class CostModel(Protocol):
+    def executable_price(
+        self, side: Literal["buy", "sell"], bar: Bar, reference_price: Decimal
+    ) -> Decimal:
+        """v3.8. The price a trade in `side` actually executes at, given a
+        quoted reference price on `bar`.
+
+        Both a fill and a position valuation ask this same question, and if
+        each worked it out separately they would eventually disagree while
+        both looking locally correct. So `fill_price` wraps this using
+        bar.open, and valuation calls it with bar.close once per direction:
+        a long is valued where it could SELL, a short where it could BUY.
+        Whether the quoted price is a bid or a mid lives in the
+        implementation, nowhere else."""
+
     def fill_price(self, order: Order, bar: Bar, book: Optional[BookSnapshot]) -> Decimal:
-        """Model the realistic fill, including spread and market impact."""
+        """Model the realistic fill, including spread and market impact.
+        The spread comes from the FILL bar, never the deciding bar."""
 
     def fees(self, order: Order, fill_price: Decimal) -> Decimal: ...
 

@@ -22,6 +22,7 @@ def _decision_record(**overrides: object) -> DecisionRecord:
             close=Decimal("1.1005"),
             volume=Decimal("100"),
             is_final=True,
+            spread=Decimal("0.00012"),
         ),
         "features": {"sma_20": Decimal("1.09987654321"), "atr_14": Decimal("0.0012")},
         "strategy_output": TargetPosition(
@@ -70,6 +71,7 @@ def _decision_record_from_json(raw: dict) -> DecisionRecord:
             close=Decimal(raw["bar"]["close"]),
             volume=Decimal(raw["bar"]["volume"]),
             is_final=raw["bar"]["is_final"],
+            spread=Decimal(raw["bar"]["spread"]),
         ),
         features={k: Decimal(v) for k, v in raw["features"].items()},
         strategy_output=TargetPosition(

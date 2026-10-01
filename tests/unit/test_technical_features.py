@@ -32,6 +32,7 @@ def _bar(index: int, open_: str, high: str, low: str, close: str) -> Bar:
         close=Decimal(close),
         volume=Decimal(1),
         is_final=True,
+        spread=Decimal("0.20"),
     )
 
 
@@ -202,6 +203,7 @@ class TestMemoryBoundedness:
                 close=Decimal(100 + i % 7),
                 volume=Decimal(1),
                 is_final=True,
+                spread=Decimal("0.20"),
             )
             sma.update(bar)
             ts += _BAR_WIDTH
@@ -227,6 +229,7 @@ class TestMemoryBoundedness:
                     close=Decimal(100 + i % 7),
                     volume=Decimal(1),
                     is_final=True,
+                    spread=Decimal("0.20"),
                 )
                 composite.update(bar)
                 ts += _BAR_WIDTH

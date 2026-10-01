@@ -1,6 +1,20 @@
 """Core immutable data types shared by every component in the engine.
 
 See docs/trading-engine-architecture.md §2.1.
+
+`Bar.spread` is an addition to the §2.1 contract, recorded as spec v3.8.
+It is carried in PRICE units, never in points: MT5 reports spread as an
+integer count of points, and the conversion happens once, at the feed
+adapter, using the instrument's point size from configuration. Nothing
+above the adapter knows what a point is, because a point means something
+different on every instrument (0.01 on XAUUSD, 0.00001 on EURUSD) and a
+component that converted on its own would eventually convert with the
+wrong one.
+
+A spread of zero is passed through as zero. Whether a zero means "no
+spread" or "the broker did not record one" is a question about data
+provenance, which the cost model answers from configuration -- see
+`engine.costs.configured`. The feed does not guess.
 """
 
 from __future__ import annotations
@@ -39,12 +53,15 @@ class Bar:
     close: Decimal
     volume: Decimal
     is_final: bool  # False for in-progress bars; strategies see finals only
+    spread: Decimal  # bid-ask spread, in PRICE units -- never in points
 
     def __post_init__(self) -> None:
         require_utc("ts_open", self.ts_open)
         require_utc("ts_close", self.ts_close)
-        for field_name in ("open", "high", "low", "close", "volume"):
+        for field_name in ("open", "high", "low", "close", "volume", "spread"):
             require_decimal(field_name, getattr(self, field_name))
+        if self.spread < 0:
+            raise ValueError(f"spread must not be negative, got {self.spread}")
         if self.ts_close <= self.ts_open:
             raise ValueError(
                 f"ts_close ({self.ts_close!r}) must be after ts_open ({self.ts_open!r})"

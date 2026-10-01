@@ -57,6 +57,7 @@ class ReplayFeed:
         timeframe: str,
         range_start: datetime,
         range_end: datetime,
+        point: Decimal,
         data_root: Path = DEFAULT_DATA_ROOT,
         stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
     ) -> None:
@@ -72,10 +73,14 @@ class ReplayFeed:
                 f"{sorted(TIMEFRAME_DURATIONS)}"
             )
 
+        if point <= 0:
+            raise ValueError(f"point must be a positive price increment, got {point}")
+
         self.instrument = instrument
         self.timeframe = timeframe
         self.range_start = range_start
         self.range_end = range_end
+        self._point = point
         self._bar_duration = TIMEFRAME_DURATIONS[timeframe]
         self._dir = data_root / instrument / timeframe
         self._check_server_timezone_provenance(stale_after_days)
@@ -119,7 +124,25 @@ class ReplayFeed:
             close=row["close"],
             volume=Decimal(row["tick_volume"]),
             is_final=True,
+            spread=self._spread_in_price_units(row["spread"]),
         )
+
+    def _spread_in_price_units(self, spread_points: int) -> Decimal:
+        """Convert MT5's integer point count into price units.
+
+        This is the only place in the engine that knows what a point is
+        (§2.1, spec v3.8). `point` comes from instrument configuration, so
+        a different broker's quoting precision is a config edit.
+
+        `point` is a required constructor argument with no default. There
+        is no safe default: multiplying by 1 would emit point counts
+        labelled as prices, which on XAUUSD overstates the spread a
+        hundredfold, and defaulting to zero would quietly discard the
+        spread of every bar the feed reads. Either way the mistake looks
+        like ordinary data. A caller that does not know the instrument's
+        point size does not know enough to read its bars.
+        """
+        return Decimal(spread_points) * self._point
 
     def stream(self) -> Iterator[Bar]:
         """Yield final bars in [range_start, range_end), strictly ascending

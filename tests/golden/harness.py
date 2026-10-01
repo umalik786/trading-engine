@@ -27,13 +27,20 @@ WHAT ONE BAR DOES, in order
 ---------------------------
   1. fill any order queued by the previous bar's decision, against this bar
   2. update the feature pipeline with this bar
-  3. mark the portfolio to this bar's close
+  3. mark the portfolio to this bar's close, asking the cost model what a
+     long and a short could each exit at
   4. ask the strategy for its target positions
-  5. turn any difference between target and actual into one market order,
-     queued for the next bar
+  5. pass each target through the sizer
+  6. turn any difference between the sized target and actual into one
+     market order, queued for the next bar
 
 Step 1 happening before step 4 is the entire point: a decision made at bar
 N's close cannot be acted on until bar N+1 exists.
+
+Step 3 asks the cost model rather than using `bar.close` directly, because
+what a position is worth is what it could be closed at, and that differs
+by direction once there is a spread. The same cost model answers for the
+fill in step 1, so the two cannot drift apart.
 """
 
 from __future__ import annotations
@@ -46,18 +53,20 @@ from decimal import Decimal
 from pathlib import Path
 
 from engine.brokers.sim import SimBroker
-from engine.core.portfolio import Portfolio, PortfolioView
+from engine.core.portfolio import ExitPrices, Portfolio, PortfolioView
 from engine.core.types import Bar, Fill, Order, TargetPosition
 from engine.costs.base import CostModel
 from engine.costs.zero import ZeroCostModel
 from engine.features.technical import TechnicalFeatureSet
+from engine.sizing.base import Sizer
+from engine.sizing.fixed import FixedQuantitySizer
 from engine.strategies.base import Strategy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTRUMENTS_CONFIG = REPO_ROOT / "config" / "instruments.yaml"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
-CSV_COLUMNS = ("ts_open", "ts_close", "open", "high", "low", "close", "volume")
+CSV_COLUMNS = ("ts_open", "ts_close", "open", "high", "low", "close", "volume", "spread")
 
 
 @dataclass(frozen=True)
@@ -113,13 +122,14 @@ class BacktestResult:
         return "\n".join(lines)
 
 
-def run_backtest(
+def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by design
     bars: Sequence[Bar],
     strategy: Strategy,
     *,
     contract_sizes: Mapping[str, Decimal],
     starting_balance: Decimal = Decimal(0),
     cost_model: CostModel | None = None,
+    sizer: Sizer | None = None,
 ) -> BacktestResult:
     """Stream `bars` through `strategy` and report what came out.
 
@@ -131,9 +141,11 @@ def run_backtest(
     if not bars:
         raise ValueError("run_backtest needs at least one bar")
 
+    costs = cost_model or ZeroCostModel()
     portfolio = Portfolio(starting_balance=starting_balance, contract_sizes=contract_sizes)
-    broker = SimBroker(cost_model=cost_model or ZeroCostModel(), portfolio=portfolio)
+    broker = SimBroker(cost_model=costs, portfolio=portfolio)
     features = TechnicalFeatureSet([])
+    sizing = sizer or FixedQuantitySizer()
     strategy_name = type(strategy).__name__
     orders: list[Order] = []
     fills: list[Fill] = []
@@ -141,14 +153,22 @@ def run_backtest(
     for bar_index, bar in enumerate(bars):
         fills.extend(broker.fill_pending(bar))
         features.update(bar)
-        portfolio.mark(bar.symbol, bar.close)
+        snapshot = features.snapshot()
+        portfolio.mark(
+            bar.symbol,
+            ExitPrices(
+                long_exit=costs.executable_price("sell", bar, bar.close),
+                short_exit=costs.executable_price("buy", bar, bar.close),
+            ),
+        )
         if bar_index < strategy.warmup_bars:
             continue
-        targets = strategy.on_bar(bar, features.snapshot(), portfolio)
+        targets = strategy.on_bar(bar, snapshot, portfolio)
         for intent_index, target in enumerate(targets):
             order = _order_for_target(
                 target,
                 portfolio,
+                sized_quantity=sizing.size(target, portfolio, snapshot),
                 pending_orders=broker.pending_orders(),
                 identifier=_client_order_id(strategy_name, target.symbol, bar, intent_index),
             )
@@ -175,6 +195,7 @@ def _order_for_target(
     target: TargetPosition,
     portfolio: PortfolioView,
     *,
+    sized_quantity: Decimal,
     pending_orders: Sequence[Order],
     identifier: str,
 ) -> Order | None:
@@ -206,7 +227,11 @@ def _order_for_target(
     committed = portfolio.position_quantity(target.symbol) + _net_pending_quantity(
         pending_orders, target.symbol
     )
-    delta = target.quantity - committed
+    # The sized quantity, not the target's own, is what the engine aims
+    # for -- the sizer is the only thing entitled to decide how big a
+    # position is. `FixedQuantitySizer` returns the target unchanged,
+    # which is why the reference strategies behave identically either way.
+    delta = sized_quantity - committed
     if delta == 0:
         return None
     return Order(
@@ -254,7 +279,12 @@ def load_bars_from_csv(path: Path, symbol: str) -> list[Bar]:
 
     Expected header -- exactly these names, in any order:
 
-        ts_open,ts_close,open,high,low,close,volume
+        ts_open,ts_close,open,high,low,close,volume,spread
+
+    `spread` is in PRICE units, not points: the conversion happened at the
+    feed, when the fixture was exported. A fixture without the column is
+    rejected rather than defaulted to zero, because a spread-less bar
+    would price a backtest as though crossing were free.
 
     Timestamps are ISO-8601 and must carry an offset:
     "2026-01-05 13:45:00+00:00" or "2026-01-05T13:45:00Z". An offset other
@@ -295,6 +325,7 @@ def load_bars_from_csv(path: Path, symbol: str) -> list[Bar]:
             close=Decimal(row["close"].strip()),
             volume=Decimal(row["volume"].strip()),
             is_final=True,
+            spread=Decimal(row["spread"].strip()),
         )
         for row in rows
     ]

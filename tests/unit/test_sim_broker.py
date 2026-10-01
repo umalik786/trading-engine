@@ -14,7 +14,7 @@ import pytest
 
 from engine.brokers.base import BrokerOrderRef
 from engine.brokers.sim import SimBroker
-from engine.core.portfolio import Portfolio
+from engine.core.portfolio import ExitPrices, Portfolio
 from engine.core.types import Bar, Order
 from engine.costs.zero import ZeroCostModel
 
@@ -40,6 +40,7 @@ def _bar(ts_open: datetime, open_price: str, close_price: str, symbol: str = SYM
         close=prices[1],
         volume=Decimal(1),
         is_final=True,
+        spread=Decimal("0.20"),
     )
 
 
@@ -213,7 +214,7 @@ class TestBrokerProtocolSurface:
         broker, portfolio = _broker()
         broker.submit(_order(quantity="2"))
         broker.fill_pending(_bar(datetime(2026, 1, 5, 12, 15, tzinfo=UTC), "2000.00", "2005.00"))
-        portfolio.mark(SYMBOL, Decimal("2005.00"))
+        portfolio.mark(SYMBOL, ExitPrices.unadjusted(Decimal("2005.00")))
 
         positions = broker.positions()
         assert len(positions) == 1

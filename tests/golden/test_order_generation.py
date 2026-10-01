@@ -42,6 +42,7 @@ def _bar(symbol: str, index: int, price: str) -> Bar:
         close=value,
         volume=Decimal(1),
         is_final=True,
+        spread=Decimal("0.20"),
     )
 
 

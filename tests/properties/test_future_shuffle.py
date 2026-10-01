@@ -15,6 +15,13 @@ The clean test stayed green through both break tests.
 If this fails: failure means indicator is reading ahead - and where the values start to diverge is 
 where the leak starts.
 
+**Future-shuffle catches order-sensitive leaks only.** A leak through
+  max/min/sum over the whole dataset passes. Fix, not yet written: a second
+  property test that scales every price after SHUFFLE_FROM by 1.1 and asserts
+  snapshots before the boundary are unchanged. Operator-written (§7.3). Must
+  be proven able to fail with an order-invariant leaky probe. Write before
+  phase 5, where walk-forward results depend on no leak of any kind.
+
 """
 
 
@@ -45,6 +52,7 @@ def load_first_1000_bars() -> list[Bar]:
         timeframe="M15",
         range_start=datetime(2026, 1, 1, tzinfo=UTC),
         range_end=datetime(2026, 3, 1, tzinfo=UTC),  # comfortably >1000 M15 bars
+                point=Decimal("0.01"),  # XAUUSD quotes to 2 decimals; unused by this test
     )
     bars = list(islice(feed.stream(), 1000))
     if len(bars) != 1000:

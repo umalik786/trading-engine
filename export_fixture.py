@@ -46,15 +46,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from engine.core.instruments import load_point_sizes
 from engine.core.types import Bar
 from engine.feeds.replay import ReplayFeed
 
 INSTRUMENT = "XAUUSD"
 TIMEFRAME = "M15"
 
-HEADER = ("ts_open", "ts_close", "open", "high", "low", "close", "volume")
+HEADER = ("ts_open", "ts_close", "open", "high", "low", "close", "volume", "spread")
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "tests" / "golden" / "fixtures"
+REPO_ROOT = Path(__file__).resolve().parent
+FIXTURE_DIR = REPO_ROOT / "tests" / "golden" / "fixtures"
+INSTRUMENTS_CONFIG = REPO_ROOT / "config" / "instruments.yaml"
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,17 @@ EXPORTS = (
         range_end=datetime(2025, 2, 12, 0, 0, tzinfo=UTC),
         filename="xauusd_m15_2025-02-05T0245_2025-02-12.csv",
     ),
+    # Phase 3a. Starts at 21:45 so the deciding bar, the fill bar and the
+    # last bar all carry DIFFERENT spreads (64, 27 and 23 points). The two
+    # windows above cannot separate a spread taken from the deciding bar
+    # from one taken from the fill bar, because in both of them those two
+    # bars happen to share a spread -- the same degeneracy as the 00:00
+    # window's equal open and close, one layer down.
+    Export(
+        range_start=datetime(2025, 2, 5, 21, 45, tzinfo=UTC),
+        range_end=datetime(2025, 2, 12, 0, 0, tzinfo=UTC),
+        filename="xauusd_m15_2025-02-05T2145_2025-02-12.csv",
+    ),
 )
 
 
@@ -99,6 +113,7 @@ def row_for(bar: Bar) -> tuple[str, ...]:
         str(bar.low),
         str(bar.close),
         str(bar.volume),
+        str(bar.spread),
     )
 
 
@@ -112,6 +127,7 @@ def export_window(spec: Export) -> None:
         timeframe=TIMEFRAME,
         range_start=spec.range_start,
         range_end=spec.range_end,
+        point=load_point_sizes(INSTRUMENTS_CONFIG)[INSTRUMENT],
     )
     rows = [row_for(bar) for bar in feed.stream()]
 

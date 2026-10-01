@@ -18,6 +18,7 @@ not exist.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 from engine.core.portfolio import Position
 from engine.core.types import Bar, Order
@@ -25,6 +26,21 @@ from engine.costs.base import BookSnapshot
 
 
 class ZeroCostModel:
+    def executable_price(
+        self,
+        side: Literal["buy", "sell"],  # noqa: ARG002 -- no spread means no side to be on
+        bar: Bar,  # noqa: ARG002
+        reference_price: Decimal,
+    ) -> Decimal:
+        """The quoted price, unchanged, whichever way you trade.
+
+        `bar.spread` is ignored rather than absent. The field exists on
+        every bar from spec v3.8 onward, and this model declines to use
+        it -- which is what keeps the phase 2 figures valid after spread
+        was added to the fixtures.
+        """
+        return reference_price
+
     def fill_price(
         self,
         order: Order,  # noqa: ARG002 -- side and size are irrelevant without spread or impact

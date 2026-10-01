@@ -28,14 +28,23 @@
 #
 # Write whole numbers unquoted. Quote anything with a decimal point
 # ("0.01") so it is parsed as exact text rather than through a float.
+# point is the smallest price increment the instrument quotes, 10^-digits.
+# It exists here because MT5 reports spread as an integer count of points
+# and the feed converts to price units on the way in. Quoted as strings so
+# they are parsed as exact decimal text rather than through a float.
 instruments:
   NAS100:
     contract_size: 1
+    point: "0.01"
   US500:
     contract_size: 1
+    point: "0.01"
   EURUSD:
     contract_size: 100000
+    point: "0.00001"
   XAUUSD:
     contract_size: 100
+    point: "0.01"
   XAGUSD:
     contract_size: 5000
+    point: "0.001"

@@ -28,6 +28,10 @@ class InstrumentSpec(BaseModel):
     # gt=0 because a zero multiplier reports every trade as breaking even
     # and a negative one reports every loss as a profit. Both are silent.
     contract_size: Decimal = Field(gt=0)
+    # The smallest quoted price increment, 10^-digits. MT5 reports spread
+    # as a count of points; the feed multiplies by this to get price units.
+    # gt=0 for the same reason: a zero point size makes every spread zero.
+    point: Decimal = Field(gt=0)
 
 
 def load_instrument_specs(path: Path) -> dict[str, InstrumentSpec]:
@@ -42,3 +46,9 @@ def load_instrument_specs(path: Path) -> dict[str, InstrumentSpec]:
 def load_contract_sizes(path: Path) -> dict[str, Decimal]:
     """The {symbol: contract_size} mapping `Portfolio` is constructed with."""
     return {symbol: spec.contract_size for symbol, spec in load_instrument_specs(path).items()}
+
+
+def load_point_sizes(path: Path) -> dict[str, Decimal]:
+    """The {symbol: point} mapping a feed needs to convert MT5's spread
+    from points into price units."""
+    return {symbol: spec.point for symbol, spec in load_instrument_specs(path).items()}

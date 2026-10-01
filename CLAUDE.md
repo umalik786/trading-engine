@@ -65,6 +65,8 @@ See `docs/state.md` for anything more recent than this line.
 - State what success looks like on screen after each step.
 - Do not condescend about the architecture, reasoning or trade-offs — the judgement in these documents is the operator's and it is sound. The gap is vocabulary and mechanics, not thinking.
 
+**Never edit files with PowerShell `Get-Content`/`Set-Content`.** Use the Edit tool, or a Python script that reads and writes UTF-8 explicitly. PowerShell 5.1 decodes BOM-less UTF-8 as Windows-1252 and writes UTF-8 with a BOM, so a bulk edit silently double-encodes every non-ASCII character and prepends a BOM. The result still parses, still passes its tests, and shows up only as mangled characters in a docstring.
+
 **When claiming a test passes, be prepared to show it failing.** A test that has never failed may be testing nothing. "Show me this test failing when the thing it checks is broken" is a standing question.
 
 **At the end of a session,** write the session's decisions into `docs/state.md`: current phase, what was decided and why, what is blocked, what is next. Ten lines.

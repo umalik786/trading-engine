@@ -1,0 +1,62 @@
+# FTMO cost profile.
+#
+# EVERY NUMBER IN THIS FILE IS A PLACEHOLDER. Nothing here has been
+# verified against FTMO, and rules_verified is deliberately unset so the
+# profile warns at load, exactly as the FTMO loss limits do (spec 6.5.6).
+# It is not "verified" until every value carries a primary source.
+#
+# price_basis is the dangerous one. It says what the stored bar prices
+# represent, and therefore which side of a trade pays the spread. MT5
+# records this per symbol as symbol_info().chart_mode (0 = bid, 1 = last),
+# and that field was NOT captured by the 2026-09-11 verification run, so
+# "bid" below is an assumption and not a finding. A wrong basis charges
+# the short instead of the long: plausible on every chart, wrong on every
+# trade. VERIFY BEFORE ANY FTMO BACKTEST IS BELIEVED.
+#
+# Decimal values are quoted so they are parsed as exact text rather than
+# through a float.
+cost_profile:
+  profile: ftmo_demo_placeholder
+  rules_verified: null   # unset -> warns at load, per 6.5.6
+  rules_source: null
+  price_basis: bid       # UNVERIFIED -- chart_mode never captured
+
+  instruments:
+    NAS100:
+      commission:
+        shape: per_lot_per_side   # UNVERIFIED
+        value: "0"                # PLACEHOLDER
+      fallback_spread: "1.40"     # PLACEHOLDER -- near the observed median
+      slippage_price_units: "0"   # phase 3c owns slippage
+    US500:
+      commission:
+        shape: per_lot_per_side   # UNVERIFIED
+        value: "0"                # PLACEHOLDER
+      fallback_spread: "0.39"     # PLACEHOLDER
+      slippage_price_units: "0"
+    EURUSD:
+      commission:
+        shape: per_lot_per_side   # UNVERIFIED
+        value: "0"                # PLACEHOLDER
+      fallback_spread: "0.00007"  # PLACEHOLDER
+      slippage_price_units: "0"
+    XAUUSD:
+      commission:
+        shape: per_lot_per_side   # UNVERIFIED
+        value: "0"                # PLACEHOLDER
+      fallback_spread: "0.16"     # PLACEHOLDER
+      slippage_price_units: "0"
+    XAGUSD:
+      commission:
+        shape: per_lot_per_side   # UNVERIFIED
+        value: "0"                # PLACEHOLDER
+      fallback_spread: "0.019"    # PLACEHOLDER
+      slippage_price_units: "0"
+
+  # zero_spread_genuine is deliberately absent everywhere above, so every
+  # zero spread in the stored history is treated as missing data and
+  # resolves to the fallback. That is the pessimistic default and the
+  # right one here: zeros are 100% of XAUUSD bars before 2010 and 100% of
+  # the index bars from 2017 to 2020, which is the broker not recording
+  # spread rather than the spread being nil. Declaring a range genuine is
+  # the only way to loosen it, and needs checking first.

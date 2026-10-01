@@ -17,6 +17,11 @@ from engine.feeds.replay import ReplayFeed
 
 _DECIMAL_TYPE = pa.decimal128(15, 5)
 
+# EURUSD quotes to 5 decimal places, so one point is 0.00001. Required by
+# ReplayFeed with no default: it is what turns MT5's integer spread into
+# price units, and there is no value that could be guessed safely.
+_POINT = Decimal("0.00001")
+
 
 def _write_year(root: Path, instrument: str, timeframe: str, year: int, rows: list[dict]) -> None:
     out_dir = root / instrument / timeframe
@@ -68,6 +73,7 @@ class TestOrderingAndDeterminism:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
         bars = list(feed.stream())
@@ -85,6 +91,7 @@ class TestOrderingAndDeterminism:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -112,6 +119,7 @@ class TestGapsStayGaps:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, tzinfo=UTC),
             range_end=datetime(2024, 1, 9, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
         bars = list(feed.stream())
@@ -139,6 +147,7 @@ class TestWarmup:
             timeframe="M15",
             range_start=range_start,
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -160,6 +169,7 @@ class TestWarmup:
             timeframe="M15",
             range_start=datetime(2024, 1, 2, 1, 0, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -177,6 +187,7 @@ class TestWarmup:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, 1, 0, tzinfo=UTC),
             range_end=datetime(2024, 1, 2, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -199,6 +210,7 @@ class TestBarShape:
             timeframe="M15",
             range_start=datetime(2024, 1, 2, 0, 0, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -217,6 +229,7 @@ class TestBarShape:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -241,6 +254,7 @@ class TestReadsOnlyTouchedYears:
             timeframe="M15",
             range_start=datetime(2024, 1, 1, tzinfo=UTC),
             range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
             data_root=tmp_path,
         )
 
@@ -258,6 +272,7 @@ class TestConstructorValidation:
                 timeframe="M15",
                 range_start=datetime(2024, 1, 1),  # noqa: DTZ001 -- naivety is what's under test
                 range_end=datetime(2024, 1, 3, tzinfo=UTC),
+                point=_POINT,
                 data_root=tmp_path,
             )
 
@@ -268,6 +283,7 @@ class TestConstructorValidation:
                 timeframe="M5",
                 range_start=datetime(2024, 1, 1, tzinfo=UTC),
                 range_end=datetime(2024, 1, 3, tzinfo=UTC),
+                point=_POINT,
                 data_root=tmp_path,
             )
 
@@ -289,8 +305,60 @@ def _construct_feed(tmp_path: Path) -> None:
         timeframe="M15",
         range_start=datetime(2024, 1, 1, tzinfo=UTC),
         range_end=datetime(2024, 1, 3, tzinfo=UTC),
+        point=_POINT,
         data_root=tmp_path,
     )
+
+
+class TestSpreadConversion:
+    """MT5 stores spread as an integer count of points; bars carry it in
+    price units. See spec §2.1 (v3.8)."""
+
+    def test_points_are_converted_to_price_units(self, tmp_path: Path) -> None:
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 3)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+
+        feed = ReplayFeed(
+            instrument="EURUSD",
+            timeframe="M15",
+            range_start=datetime(2024, 1, 1, tzinfo=UTC),
+            range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
+            data_root=tmp_path,
+        )
+        bars = list(feed.stream())
+
+        # _write_year stores a spread of 1 point; 1 x 0.00001 = 0.00001
+        assert all(bar.spread == Decimal("0.00001") for bar in bars)
+
+    def test_a_different_point_size_scales_the_spread(self, tmp_path: Path) -> None:
+        """The conversion is wired to the configured point, not hardcoded.
+        XAUUSD's point is a thousand times EURUSD's, and the same stored
+        integer must come out a thousand times larger."""
+        rows = _m15_series(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 3)
+        _write_year(tmp_path, "EURUSD", "M15", 2024, rows)
+
+        feed = ReplayFeed(
+            instrument="EURUSD",
+            timeframe="M15",
+            range_start=datetime(2024, 1, 1, tzinfo=UTC),
+            range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=Decimal("0.01"),
+            data_root=tmp_path,
+        )
+
+        assert next(iter(feed.stream())).spread == Decimal("0.01")
+
+    def test_a_non_positive_point_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="positive price increment"):
+            ReplayFeed(
+                instrument="EURUSD",
+                timeframe="M15",
+                range_start=datetime(2024, 1, 1, tzinfo=UTC),
+                range_end=datetime(2024, 1, 3, tzinfo=UTC),
+                point=Decimal(0),
+                data_root=tmp_path,
+            )
 
 
 class TestServerTimezoneProvenance:

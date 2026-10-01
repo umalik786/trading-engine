@@ -20,6 +20,7 @@ def _bar(**overrides: object) -> Bar:
         "close": Decimal("1.1005"),
         "volume": Decimal("100"),
         "is_final": True,
+        "spread": Decimal("0.00012"),
     }
     defaults.update(overrides)
     return Bar(**defaults)
@@ -118,6 +119,24 @@ class TestBarDecimalValidation:
     def test_float_volume_rejected(self) -> None:
         with pytest.raises(TypeError, match="Decimal"):
             _bar(volume=100.0)
+
+    def test_float_spread_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Decimal"):
+            _bar(spread=0.0002)
+
+
+class TestBarSpread:
+    """Spread is carried in price units, added in spec v3.8."""
+
+    def test_zero_spread_is_allowed(self) -> None:
+        """A zero passes through the Bar untouched. Deciding whether it
+        means 'no spread' or 'not recorded' is the cost model's job, not
+        this type's."""
+        assert _bar(spread=Decimal(0)).spread == Decimal(0)
+
+    def test_negative_spread_rejected(self) -> None:
+        with pytest.raises(ValueError, match="negative"):
+            _bar(spread=Decimal("-0.0001"))
 
 
 class TestTargetPosition:

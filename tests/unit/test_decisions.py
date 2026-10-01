@@ -19,6 +19,7 @@ def _bar(**overrides: object) -> Bar:
         "close": Decimal("1.1005"),
         "volume": Decimal("100"),
         "is_final": True,
+        "spread": Decimal("0.00012"),
     }
     defaults.update(overrides)
     return Bar(**defaults)

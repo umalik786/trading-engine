@@ -1,0 +1,27 @@
+# Cost profile for the phase 3a golden tests. TEST DATA, not a venue.
+#
+# It lives beside the fixtures rather than in config/ because it is not a
+# claim about any broker. The bid basis here is an assumption OF THE TEST:
+# it fixes which side pays the spread so a figure can be computed by hand,
+# and says nothing about what FTMO actually quotes. The FTMO profile in
+# config/cost_ftmo_demo.yaml carries that question, unresolved.
+#
+# Commission is deliberately non-zero so that a model which drops fees
+# entirely cannot pass. 3.50 per lot per side.
+cost_profile:
+  profile: phase3a_test
+  rules_verified: null   # test data; it warns at load and that is correct
+  rules_source: null
+  price_basis: bid
+
+  instruments:
+    XAUUSD:
+      commission:
+        shape: per_lot_per_side
+        value: "3.50"
+      fallback_spread: "0.30"
+      slippage_price_units: "0"
+      # No zero_spread_genuine ranges: the chosen fixture window contains
+      # no zero spreads at all, so the fallback is never reached. Left
+      # unconfigured on purpose, so that if a future window did contain a
+      # zero it would be treated as missing rather than free.

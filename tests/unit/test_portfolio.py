@@ -15,7 +15,7 @@ from decimal import Decimal
 
 import pytest
 
-from engine.core.portfolio import Portfolio, Position
+from engine.core.portfolio import ExitPrices, Portfolio, Position
 from engine.core.types import Fill
 
 XAUUSD_CONTRACT_SIZE = Decimal(100)
@@ -26,6 +26,12 @@ _TS = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
 
 def _portfolio(starting_balance: str = "0") -> Portfolio:
     return Portfolio(starting_balance=Decimal(starting_balance), contract_sizes=CONTRACT_SIZES)
+
+
+def _exits(long_exit: str, short_exit: str) -> ExitPrices:
+    """The two prices a position could be closed at -- selling for a long,
+    buying for a short."""
+    return ExitPrices(long_exit=Decimal(long_exit), short_exit=Decimal(short_exit))
 
 
 def _fill(quantity: str, price: str, symbol: str = "XAUUSD", fees: str = "0") -> Fill:
@@ -118,7 +124,7 @@ class TestMarkingAndEquity:
     def test_unrealised_pnl_follows_the_mark_price(self) -> None:
         portfolio = _portfolio()
         portfolio.apply_fill(_fill("2", "2000.00"))
-        portfolio.mark("XAUUSD", Decimal("2010.00"))
+        portfolio.mark("XAUUSD", ExitPrices.unadjusted(Decimal("2010.00")))
 
         # 2 lots x 100 x (2010.00 - 2000.00) = 2000.00
         assert portfolio.unrealised_pnl == Decimal("2000.00")
@@ -126,7 +132,7 @@ class TestMarkingAndEquity:
     def test_a_short_gains_when_the_mark_falls(self) -> None:
         portfolio = _portfolio()
         portfolio.apply_fill(_fill("-2", "2000.00"))
-        portfolio.mark("XAUUSD", Decimal("1950.00"))
+        portfolio.mark("XAUUSD", ExitPrices.unadjusted(Decimal("1950.00")))
 
         # -2 lots x 100 x (1950.00 - 2000.00) = +10000.00
         assert portfolio.unrealised_pnl == Decimal("10000.00")
@@ -144,7 +150,8 @@ class TestMarkingAndEquity:
         portfolio.apply_fill(_fill("1", "2000.00"))
         portfolio.apply_fill(_fill("-1", "2010.00"))  # realises 1 x 100 x 10.00 = 1000.00
         portfolio.apply_fill(_fill("1", "2010.00"))  # opens again
-        portfolio.mark("XAUUSD", Decimal("2015.00"))  # 1 x 100 x 5.00 = 500.00 unrealised
+        # 1 x 100 x 5.00 = 500.00 unrealised
+        portfolio.mark("XAUUSD", ExitPrices.unadjusted(Decimal("2015.00")))
 
         assert portfolio.realised_pnl == Decimal("1000.00")
         assert portfolio.balance == Decimal("101000.00")
@@ -155,7 +162,7 @@ class TestMarkingAndEquity:
         portfolio = _portfolio()
         portfolio.apply_fill(_fill("1", "2000.00", symbol="XAUUSD"))
         portfolio.apply_fill(_fill("1", "1.1000", symbol="EURUSD"))
-        portfolio.mark("EURUSD", Decimal("1.1050"))
+        portfolio.mark("EURUSD", ExitPrices.unadjusted(Decimal("1.1050")))
 
         # EURUSD only: 1 lot x 100000 x 0.0050 = 500.00
         assert portfolio.unrealised_pnl == Decimal("500.00")
@@ -179,7 +186,7 @@ class TestDecimalDiscipline:
         comparison means what it says."""
         portfolio = _portfolio()
         portfolio.apply_fill(_fill("1", "1.1000", symbol="EURUSD"))
-        portfolio.mark("EURUSD", Decimal("1.1005"))
+        portfolio.mark("EURUSD", ExitPrices.unadjusted(Decimal("1.1005")))
 
         # 1 lot x 100000 x 0.0005 = 50.00, exactly
         assert portfolio.unrealised_pnl == Decimal("50.00")
@@ -192,7 +199,7 @@ class TestDecimalDiscipline:
         portfolio = _portfolio()
         portfolio.apply_fill(_fill("1", "2000.00"))
         portfolio.apply_fill(_fill("2", "2001.00"))
-        portfolio.mark("XAUUSD", Decimal("2005.00"))
+        portfolio.mark("XAUUSD", ExitPrices.unadjusted(Decimal("2005.00")))
 
         # 3 x 100 x 2005.00 - 100 x (1 x 2000.00 + 2 x 2001.00)
         #   = 601500.00 - 600200.00 = 1300.00
@@ -208,8 +215,53 @@ class TestDecimalDiscipline:
 
     def test_float_mark_price_is_rejected(self) -> None:
         portfolio = _portfolio()
-        with pytest.raises(TypeError, match="Decimal"):
+        with pytest.raises(TypeError, match="ExitPrices"):
             portfolio.mark("XAUUSD", 2000.0)  # type: ignore[arg-type]
+
+    def test_a_bare_price_is_rejected_even_as_a_decimal(self) -> None:
+        """A single price cannot say what a short could exit at. Passing
+        one has to be explicit -- ExitPrices.unadjusted -- so that a
+        spread-aware venue can never be marked with a one-sided price by
+        accident."""
+        portfolio = _portfolio()
+        with pytest.raises(TypeError, match="ExitPrices"):
+            portfolio.mark("XAUUSD", Decimal("2000.00"))  # type: ignore[arg-type]
+
+
+class TestSideAwareValuation:
+    def test_a_long_uses_the_long_exit_price(self) -> None:
+        portfolio = _portfolio()
+        portfolio.apply_fill(_fill("2", "2000.00"))
+        portfolio.mark("XAUUSD", _exits("2010.00", "2010.30"))
+
+        # 2 lots x 100 x (2010.00 - 2000.00) = 2000.00, using the SELL side
+        assert portfolio.unrealised_pnl == Decimal("2000.00")
+
+    def test_a_short_uses_the_short_exit_price(self) -> None:
+        """The short is valued at what it would cost to BUY back, which on
+        a bid-quoted venue is the higher of the two."""
+        portfolio = _portfolio()
+        portfolio.apply_fill(_fill("-2", "2000.00"))
+        portfolio.mark("XAUUSD", _exits("1950.00", "1950.30"))
+
+        # -2 lots x 100 x (1950.30 - 2000.00) = +9940.00, not 10000.00
+        assert portfolio.unrealised_pnl == Decimal("9940.00")
+
+    def test_the_same_bar_values_a_long_and_a_short_differently(self) -> None:
+        """One lot each way, marked from the same bar. The long closes at
+        the bid it opened at and is flat; the short must buy back across
+        the spread and is down by it."""
+        long_book = _portfolio()
+        long_book.apply_fill(_fill("1", "2000.00"))
+        long_book.mark("XAUUSD", _exits("2000.00", "2000.30"))
+
+        short_book = _portfolio()
+        short_book.apply_fill(_fill("-1", "2000.00"))
+        short_book.mark("XAUUSD", _exits("2000.00", "2000.30"))
+
+        # short: 1 x 100 x (2000.30 - 2000.00) against it = -30.00
+        assert long_book.unrealised_pnl == Decimal(0)
+        assert short_book.unrealised_pnl == Decimal("-30.00")
 
 
 class TestContractSizeConfiguration:

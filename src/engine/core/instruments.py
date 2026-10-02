@@ -32,6 +32,10 @@ class InstrumentSpec(BaseModel):
     # as a count of points; the feed multiplies by this to get price units.
     # gt=0 for the same reason: a zero point size makes every spread zero.
     point: Decimal = Field(gt=0)
+    # The currency the instrument is quoted in. Compared against the cost
+    # profile's account currency, which raises on a mismatch rather than
+    # converting at an FX rate nobody has verified.
+    quote_currency: str = "USD"
 
 
 def load_instrument_specs(path: Path) -> dict[str, InstrumentSpec]:

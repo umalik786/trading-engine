@@ -51,6 +51,57 @@ class TestShippedProfiles:
         assert commission.shape == "per_lot_per_side"
         assert commission.value == Decimal("3.50")
 
+    @pytest.mark.parametrize("path", [FTMO_PROFILE, TEST_PROFILE])
+    def test_every_instrument_covered_has_a_financing_entry(self, path: Path) -> None:
+        """A missing financing entry raises at the first rollover rather
+        than charging zero, so a profile that covers an instrument for
+        commission but forgets its swap would fail mid-run. Confirmed
+        here, at load, for both shipped profiles."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(path)
+
+        covered = set(profile.instruments)
+        financed = set(profile.financing.instruments)
+        assert covered == financed, (
+            f"{profile.profile}: instruments without a financing entry: "
+            f"{covered - financed}; financing entries for instruments the profile "
+            f"does not otherwise cover: {financed - covered}"
+        )
+
+    @pytest.mark.parametrize("path", [FTMO_PROFILE, TEST_PROFILE])
+    def test_a_financing_profile_names_its_server_clock(self, path: Path) -> None:
+        """The rollover instant is midnight on the server's clock, and
+        there is no default for which clock that is."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(path)
+
+        assert profile.server_clock is not None
+
+    def test_the_ftmo_financing_section_is_verified_unlike_the_rest(self) -> None:
+        """The reason provenance is per section: these swap values were
+        read from symbol_info() on a known date, while price_basis and
+        commission are placeholders. One date for the whole file would
+        have to mislabel one or the other."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(FTMO_PROFILE)
+
+        assert profile.rules_verified is None  # the file as a whole
+        assert profile.financing.provenance.verified == date(2026, 9, 11)
+        assert profile.financing.provenance.source is not None
+        assert profile.financing.provenance.stale_after_days == 30
+
+    def test_the_ftmo_triple_weekday_is_set_but_unverified(self) -> None:
+        """swap_rollover3days was never captured, so Wednesday is the
+        common convention rather than a reading from this account. On the
+        trial-session checklist."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(FTMO_PROFILE)
+
+        assert all(
+            rates.triple_weekday == "Wednesday"
+            for rates in profile.financing.instruments.values()
+        )
+
     def test_decimal_values_load_as_decimal_not_float(self) -> None:
         with pytest.warns(UserWarning, match="verification is incomplete"):
             profile = load_cost_profile(TEST_PROFILE)
@@ -91,6 +142,9 @@ class TestValidation:
         raw = {
             "profile": "unit-test",
             "price_basis": "bid",
+            # Every covered instrument needs a financing entry; `disabled`
+            # is how "no swap" is stated, and needs no server clock.
+            "financing": {"instruments": {"XAUUSD": {"shape": "disabled"}}},
             "instruments": {
                 "XAUUSD": {"commission": {"shape": "per_lot_per_side", "value": "1.00"}}
             },
@@ -141,6 +195,35 @@ class TestValidation:
         profile = CostProfile.model_validate(self._profile())
 
         assert profile.instruments["XAUUSD"].slippage_price_units == Decimal(0)
+
+    def test_an_instrument_without_a_financing_entry_fails_at_load(self) -> None:
+        """Structural, not deferred to the first rollover. A profile that
+        covers an instrument for commission while forgetting its swap is
+        wrong when it is written, not when it is used."""
+        with pytest.raises(ValidationError, match="no financing entry"):
+            CostProfile.model_validate(self._profile(financing={"instruments": {}}))
+
+    def test_a_financing_entry_for_an_uncovered_instrument_fails_at_load(self) -> None:
+        """The other direction: a swap entry naming an instrument the
+        profile does not otherwise cover is a typo or a missing commission
+        entry, and either way is not what anyone meant."""
+        raw = self._profile(
+            financing={
+                "instruments": {
+                    "XAUUSD": {"shape": "disabled"},
+                    "XAGUSD": {"shape": "disabled"},
+                }
+            }
+        )
+        with pytest.raises(ValidationError, match="XAGUSD"):
+            CostProfile.model_validate(raw)
+
+    def test_saying_disabled_satisfies_the_coverage_rule(self) -> None:
+        """Silence is refused; an explicit zero is not. Someone has to
+        type `disabled`, which is the whole distinction."""
+        profile = CostProfile.model_validate(self._profile())
+
+        assert profile.financing.instruments["XAUUSD"].shape == "disabled"
 
     def test_fallback_spread_may_be_omitted(self) -> None:
         """Optional in the schema. The cost model raises if a zero spread

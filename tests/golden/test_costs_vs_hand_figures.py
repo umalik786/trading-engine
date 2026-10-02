@@ -1,5 +1,5 @@
-"""Phase 3a exit criterion: AlwaysLong and AlwaysShort with spread and
-commission, against figures computed by hand.
+"""Phase 3a/3b exit criterion: AlwaysLong and AlwaysShort with spread,
+commission and overnight financing, against figures computed by hand.
 
 Spec §9 phase 3: "`AlwaysLong` matches buy-and-hold minus a cost figure you
 can derive by hand." This is that test, extended to the short side, because
@@ -39,6 +39,39 @@ side, slippage zero. The bid basis is an assumption OF THIS TEST, chosen so
 a figure can be computed by hand. It is not a claim about FTMO, whose
 `chart_mode` has never been captured -- see `config/cost_ftmo_demo.yaml`.
 
+FINANCING (phase 3b)
+--------------------
+Swap shape `points`, so one lot for one night is
+
+    rate x point x contract_size   =   rate x 0.01 x 100   =   rate
+
+for XAUUSD, where that conversion factor of 1 is confirmed twice over: the
+broker's own `tick_value` for XAUUSD is 1.0.
+
+    long_rate   -83.0 points   (charged to a long)
+    short_rate  +12.5 points   (PAID to a short -- the credit path)
+
+Triple weekday is THURSDAY, not the conventional Wednesday, because the
+fixture's only Wednesday-ending rollover falls before the fill and a
+Wednesday triple would therefore never be charged.
+
+Rollovers in the window, at midnight server time (UTC+2 in February, so
+22:00 UTC the day before), labelled by the server day ENDING:
+
+    2025-02-05 22:00 UTC   Wednesday   0 nights -- position not open yet
+    2025-02-06 22:00 UTC   Thursday    3 nights -- triple day
+    2025-02-07 22:00 UTC   Friday      1 night
+    2025-02-08 22:00 UTC   Saturday    0 nights -- weekend
+    2025-02-09 22:00 UTC   Sunday      0 nights -- weekend
+    2025-02-10 22:00 UTC   Monday      1 night
+    2025-02-11 22:00 UTC   Tuesday     1 night
+                                       --------
+                                       6 nights
+
+Financing accrues on the open position, so it moves equity but NOT
+balance -- which is what MT5 does, and why `realised_pnl` below is still
+only the commission.
+
 WHAT THE ENGINE WILL DO
 -----------------------
 - The order is decided at the FIRST bar's close and fills at the SECOND
@@ -69,7 +102,7 @@ from decimal import Decimal
 import pytest
 from harness import FIXTURE_DIR, INSTRUMENTS_CONFIG, load_bars_from_csv, run_backtest
 
-from engine.core.instruments import load_contract_sizes
+from engine.core.instruments import load_contract_sizes, load_instrument_specs
 from engine.costs.configured import ConfiguredCostModel
 from engine.costs.profile import load_cost_profile
 from engine.strategies.reference.always_long import AlwaysLong
@@ -88,8 +121,10 @@ class Case:
 
 
 CASES = [
-    Case(direction="long", expected_pnl=Decimal("3078.5")),
-    Case(direction="short", expected_pnl=Decimal("-3135.5")),
+    # Phase 3a figures were 3078.50 and -3135.50, spread and commission
+    # only. Financing is now charged as well, so both need recomputing.
+    Case(direction="long", expected_pnl=Decimal("2580.5")),
+    Case(direction="short", expected_pnl=Decimal("-3060.5")),
 ]
 
 
@@ -102,12 +137,11 @@ def _run(direction: str):
     )
     with pytest.warns(UserWarning, match="verification is incomplete"):
         profile = load_cost_profile(COST_PROFILE)
-    contract_sizes = load_contract_sizes(INSTRUMENTS_CONFIG)
     return run_backtest(
         bars,
         strategy,
-        contract_sizes=contract_sizes,
-        cost_model=ConfiguredCostModel(profile, contract_sizes),
+        contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
+        cost_model=ConfiguredCostModel(profile, load_instrument_specs(INSTRUMENTS_CONFIG)),
     )
 
 
@@ -116,10 +150,11 @@ def test_reference_strategy_matches_the_hand_computed_figure(case: Case) -> None
     result = _run(case.direction)
     expected_side = "buy" if case.direction == "long" else "sell"
 
-    # No result.describe() anywhere in this file, on purpose: it prints
-    # total and unrealised P&L and the fill price, and these figures are
-    # meant to be computed blind. Each message below carries only what is
-    # structural, or what the profile already fixes.
+    # The structural assertions below deliberately avoid result.describe():
+    # it prints total and unrealised P&L and the fill price, and while a
+    # figure is still outstanding those are meant to be computed blind.
+    # Only the final comparison uses it, where a registered figure already
+    # exists and the engine's number is what needs diagnosing.
     assert len(result.orders) == 1, (
         "a constant target must produce exactly one order across the run -- "
         f"got {len(result.orders)}"
@@ -135,8 +170,15 @@ def test_reference_strategy_matches_the_hand_computed_figure(case: Case) -> None
         f"Fill.fees rather than in the price -- got {result.fills[0].fees}"
     )
     assert result.realised_pnl == Decimal("-3.50"), (
-        "the only realised amount is the commission, because nothing has "
-        f"been closed -- got {result.realised_pnl}"
+        "the only realised amount is the commission. Nothing has been closed, so "
+        "financing is still sitting on the open position and has not reached "
+        f"balance -- got {result.realised_pnl}"
+    )
+    assert result.financing_accrued != Decimal(0), (
+        "six nights of financing should have accrued. A zero here means the "
+        "rollovers were never charged, which would make the figure agree with a "
+        "hand calculation that forgot financing as readily as with one that "
+        "included it"
     )
     assert result.unfilled_orders == (), (
         f"{len(result.unfilled_orders)} order(s) never filled"
@@ -145,9 +187,9 @@ def test_reference_strategy_matches_the_hand_computed_figure(case: Case) -> None
     if case.expected_pnl is None:
         pytest.fail(
             f"No hand-computed figure for the {case.direction} case yet, so the "
-            "phase 3a exit criterion has not been measured. The structural "
+            "phase 3a/3b exit criterion has not been measured. The structural "
             "assertions above it passed: one order, correct side, one fill, "
-            "3.50 commission.\n\n"
+            "3.50 commission, and financing accrued on the open position.\n\n"
             "The engine's own figure is deliberately NOT shown here. A figure "
             "computed after reading the engine's is not an independent check "
             "of it -- it is a transcription. Work yours out from the fixture, "

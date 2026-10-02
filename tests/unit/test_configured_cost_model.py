@@ -12,13 +12,17 @@ from decimal import Decimal
 
 import pytest
 
-from engine.core.portfolio import Position
+from engine.core.instruments import InstrumentSpec
 from engine.core.types import Bar, Order
 from engine.costs.configured import ConfiguredCostModel
 from engine.costs.profile import CostProfile
 
 SYMBOL = "XAUUSD"
-CONTRACT_SIZES = {SYMBOL: Decimal(100)}
+SPECS = {
+    SYMBOL: InstrumentSpec(
+        contract_size=Decimal(100), point=Decimal("0.01"), quote_currency="USD"
+    )
+}
 _TS = datetime(2025, 6, 10, 12, 0, tzinfo=UTC)
 _BAR_WIDTH = timedelta(minutes=15)
 
@@ -44,13 +48,18 @@ def _profile(  # noqa: PLR0913 -- one keyword per profile field under test
         {
             "profile": "unit-test",
             "price_basis": basis,
+            # Stated rather than omitted: a profile that covers an
+            # instrument must say something about its swap, and these
+            # tests are about spread and commission. `disabled` needs no
+            # server clock.
+            "financing": {"instruments": {SYMBOL: {"shape": "disabled"}}},
             "instruments": {SYMBOL: instrument},
         }
     )
 
 
 def _model(**kwargs: object) -> ConfiguredCostModel:
-    return ConfiguredCostModel(_profile(**kwargs), CONTRACT_SIZES)  # type: ignore[arg-type]
+    return ConfiguredCostModel(_profile(**kwargs), SPECS)  # type: ignore[arg-type]
 
 
 def _bar(
@@ -321,11 +330,19 @@ class TestSlippageIsWiredNotDecorative:
         assert sell < Decimal("2000.00")
 
 
-class TestOutOfScopeForNow:
-    def test_financing_is_zero_until_phase_3b(self) -> None:
-        position = Position(symbol=SYMBOL, quantity=Decimal(1), cost=Decimal("2000.00"))
+class TestCurrencyGuard:
+    def test_an_instrument_quoted_in_another_currency_raises(self) -> None:
+        """Converting would need an FX rate this project does not have, so
+        the mismatch is refused at construction rather than producing a
+        money figure in the wrong currency."""
+        specs = {
+            SYMBOL: InstrumentSpec(
+                contract_size=Decimal(100), point=Decimal("0.01"), quote_currency="EUR"
+            )
+        }
 
-        assert _model().financing(position, _bar()) == Decimal(0)
+        with pytest.raises(ValueError, match="quoted"):
+            ConfiguredCostModel(_profile(), specs)
 
 
 class TestMissingConfiguration:

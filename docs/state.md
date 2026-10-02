@@ -1,7 +1,133 @@
 # Current State
 
-**Phase:** 3a — COMPLETE (2026-10-01). Phase 2 complete 2026-09-30.
-**Last session:** 2026-10-01
+**Phase:** 3b — COMPLETE (2026-10-02). Phase 3a complete 2026-10-01,
+phase 2 complete 2026-09-30.
+**Last session:** 2026-10-02
+
+## Phase 3b — financing, COMPLETE 2026-10-02
+
+Overnight swap behind the `CostModel` interface. Values, formula shapes, the
+server clock and the triple weekday are all configuration.
+
+- **The rollover is midnight on the server's clock**, derived from the verified
+  server-timezone rule rather than any constant. In February that is 22:00 UTC; in
+  July it is 21:00. A hardcoded hour would be right for about four months a year.
+- **The clock is promoted into the engine.** `ftmo_server_utc_offset` lived in
+  `extract_mt5_data.py`, a root-level script. The arithmetic now lives in
+  `engine/core/clock.py` and the script imports it, so there is one definition.
+  The server-timezone market-fact tests still pass unchanged, which is what
+  confirms the move changed no behaviour.
+- **Two clock shapes**, because a server clock is venue configuration: `iana` (a
+  real, nameable zone — a retail broker) and `dst_switched_offsets` (fixed winter
+  and summer offsets switching on another region's DST calendar — FTMO is +2/+3 on
+  `America/New_York`, which matches no IANA zone). **Kept separate from the §6.5
+  accounting-day clock, deliberately**: FTMO's accounting day runs in Prague on the
+  European calendar, and the two differ by two hours for a few weeks each spring and
+  autumn. Merging them would be right most of the year and wrong exactly when it
+  mattered.
+- **Order of operations per bar, which is what makes the size at each rollover exact
+  rather than approximate.** Rollovers land on bar boundaries and fills land on bar
+  opens, so one charge per bar would have to guess which side of the fill a boundary
+  rollover fell on. Two windows do not guess:
+  1. charge rollovers in `(previous bar's close, this bar's open]` on the position as
+     held BEFORE this bar's fills
+  2. apply fills at the bar's open
+  3. charge rollovers in `(this bar's open, this bar's close]` on the position AFTER
+     the fills
+
+  Consequences, both now unit-tested: a position **opened** at exactly a rollover
+  instant is **not** charged for it; a position **closed** at exactly a rollover
+  instant **is**. You owe for the night you held and not for one that ended as you
+  came in.
+- **Signed rates, and the credit path is real.** EURUSD and XAGUSD shorts currently
+  earn +0.35 and +0.5 points on this venue. A mechanism that treated financing as
+  always a cost would be wrong today, not hypothetically.
+- **Financing accrues on the open position, so it moves equity but not balance**, and
+  lands on balance only when the position closes — which is what MT5 does. This is
+  why `realised_pnl` in the golden tests is still only the commission. The
+  distinction is load-bearing: §6.5.3 records whether each firm's daily loss limit
+  watches equity or closed balance, so it decides whether financing counts against
+  the limit yet.
+- **Shapes implemented:** `points` (MT5 mode 1, what FTMO uses on all five),
+  `currency_per_lot` (mode 4, the common retail shape) and `disabled` (mode 0).
+  Modes 2, 3, 5, 6, 7 and 8 raise by name: the interest modes need a day-count
+  convention that is another unverified external fact, and the reopen modes alter the
+  position's open price rather than charging money.
+- **The points conversion is confirmed twice over.** Money per lot per night is
+  `rate x point x contract_size`, and the 2026-09-11 run shows that
+  `point x contract_size` equals the broker's own `tick_value` for all five
+  instruments. Two independent routes to the same figure.
+- **Provenance is now per section.** The swap rates *are* verified (2026-09-11, from
+  `symbol_info()`); `price_basis`, commission and the triple weekday are not. One
+  `rules_verified` per file would have forced one of those to be mislabelled.
+  Financing also carries a **30-day** staleness threshold rather than 90, because
+  brokers revise swap rates far more often than rulebooks change.
+- **`quote_currency` and `account_currency` added.** All five instruments are
+  USD-quoted against a USD account, and `ConfiguredCostModel` now raises at
+  construction on any mismatch rather than converting at an unverified FX rate — the
+  assumption made checkable instead of written in a docstring.
+- **Spec v3.9:** `CostModel.financing` takes an explicit half-open window instead of
+  a `Bar`. A bar cannot express the question, because whether a rollover happened
+  depends on where time was before it.
+- **`Position` gains `opened_at` and `financing_accrued`.** The first is what makes
+  "was it open at that instant" answerable; the position-conventions step will need
+  it too, for closing the oldest ticket first.
+
+### Exit criterion — MET 2026-10-02
+
+`AlwaysLong` and `AlwaysShort` matched operator-computed figures to the cent with
+spread, commission and financing all applied: **2580.50** and **-3060.50**. Both
+computed by hand before the engine was run, and the engine's own figures were withheld
+from the failure message so they could not be transcribed instead of derived.
+
+The move from the 3a figures is exactly the financing: 3078.50 - 498.00 = 2580.50 for
+the long, and -3135.50 + 75.00 = -3060.50 for the short. Six nights at -83.00 and
++12.50 respectively. The short's figure is the one that exercises the credit path,
+since its rate is positive -- a mechanism that treated financing as always a cost
+would have been wrong on that case alone while the long still passed.
+
+The test profile uses a **Thursday** triple day, because the fixture's only
+Wednesday-ending rollover falls before the fill and a Wednesday triple would therefore
+never be charged. Rollovers crossed and nights charged are listed in that test's
+docstring.
+
+### Breaks run, 2026-10-02 — every move predicted before running, every one exact
+
+Per night on one lot: long -83.00, short +12.50. Six nights charged at baseline.
+
+| Break | Nights | Long | Short | Caught by |
+|---|---|---|---|---|
+| Wednesday rollover charged though position not open | +1 | **0.00** | **0.00** | unit tests only -- see below |
+| Weekends charged | +2 | **-166.00** | **+25.00** | golden, both cases |
+| Triple day ignored | -2 | **+166.00** | **-25.00** | golden, both cases |
+| Long and short rates swapped | — | **+573.00** | **-573.00** | golden, both cases |
+| Sign dropped (credit charged as a cost) | — | **0.00** | **-150.00** | golden, short only |
+| "Day beginning" labelling | -2 | **+166.00** | **-25.00** | golden, both cases |
+
+Three findings that matter more than the arithmetic:
+
+- **The golden test cannot catch the first break at all.** Disabling the cost model's
+  `opened_at` guard moved neither figure, because the engine loop's two-window ordering
+  independently prevents the charge: the pre-fill window is evaluated while the book is
+  still flat, so `financing()` is never even called for that rollover. Two mechanisms
+  protect the same rule and the loop's fires first. Only two unit tests in
+  `test_financing.py` failed. That is the argument for having both -- and a warning
+  that an end-to-end figure can be silent about a rule it happens to satisfy twice.
+- **Sign dropped is invisible on the long**, whose rate is already negative. Only the
+  short catches it. The same single-strategy blindness as 3a's breaks 1 and 3, now on
+  a third mechanism: one reference strategy is never enough to cover a cost model.
+- **"Triple day ignored" and "day beginning labelling" are indistinguishable by the
+  figure.** Both net to -2 nights and produce identical totals, by different routes:
+  the labelling break turns Thursday's triple into a Friday single (-2), Friday's
+  single into a Saturday zero (-1), and Sunday's zero into a Monday single (+1). The
+  unit tests do separate them -- 4 failures for the triple-day break, all in
+  `TestWeekendsAndTripleDay`, against 7 for the labelling break including both
+  `TestDayEndingLabel` clock tests. So the failure signature identifies the bug where
+  the number cannot.
+
+Absence of break residue verified by SHA-256 of all 39 files under `src/` against a
+snapshot taken before the first break -- identical. Every one of the six breaks was in
+`src/`, unlike 3a's break 5 which had to live in the harness.
 
 ## Phase 3a exit criterion — MET 2026-10-01
 
@@ -244,6 +370,22 @@ matches among the 50 differing snapshots.
 
 - Nothing open.
 
+## Trial-session checklist
+
+Things that can only be settled on a live terminal or a live account, collected so a
+trial session is not wasted. Each needs a reading, not an opinion.
+
+- **Hold a position across a Wednesday night and read the swap off the deal record.**
+  Settles two things at once: whether the triple-swap day really is Wednesday
+  (`symbol_info().swap_rollover3days` was never captured), and whether "Wednesday"
+  means the rollover from Wednesday into Thursday — the day-ending convention the
+  engine uses, currently recorded as unverified. Getting the labelling wrong moves
+  every triple charge by a day.
+- **Read `symbol_info().chart_mode`** for each instrument, to settle whether bars are
+  bid-built or last-built. `check_margin_mode.py` is the model for the script; see the
+  `price_basis` gap below.
+- **Place one order and check whether the `comment` field survives** (§10 item 2).
+
 ## Next
 
 - **Phase 3 — the spec's phase 3 (§9): cost model (spread, commission, slippage) and
@@ -279,6 +421,14 @@ matches among the 50 differing snapshots.
   instead of the long: plausible on every chart, wrong on every trade. The phase 3a
   test profile also uses a bid basis, but there it is an assumption *of the test*,
   chosen so a figure can be computed by hand, and makes no claim about FTMO.
+- **Holiday rollovers are charged one night.** There is no holiday calendar in the
+  project, so a rollover falling inside a holiday gap is treated as an ordinary night.
+  Real brokers vary. A known approximation, recorded rather than guessed at.
+- **Partial closes pro-rate accrued financing**, which is a division — the same
+  bounded one as the cost basis, where the remainder is defined by subtraction so the
+  rounding cancels in equity and can only move the realised/unrealised split. Resolve
+  with the position-conventions step, where per-ticket accounting removes it for
+  hedging venues.
 - **`per_lot_round_turn` commission over-charges a closing fill.** Per the phase 3a
   decision it charges the full round turn at entry — pessimistic, and common broker
   practice. But `fees()` cannot tell an entry from an exit, so it charges the full round
@@ -297,6 +447,22 @@ matches among the 50 differing snapshots.
   works against `SimBroker.fill_pending(bar)` is a second backtester, which is what P1
   forbids. Design the orchestrator and the live fill path together, then delete the
   harness.
+  **Costs must sit strictly behind the `CostModel` interface, never in the bar loop.**
+  Break 5 showed why: a per-bar spread charge placed in the shared loop also charged
+  `ZeroCostModel` runs and turned three phase 2 tests red. A cost bug in the loop
+  contaminates every wiring; behind the seam it stays contained.
+  **The per-bar order of operations has no test of its own, and needs one when the
+  orchestrator is built.** The ordering is: charge financing for the pre-fill window
+  against the position as held BEFORE this bar's fills, apply the fills at the bar's
+  open, then charge the post-fill window against the position as it stands after them.
+  Nothing currently tests that sequence directly. Phase 3b break 1 showed why it cannot
+  be left to the golden test: the cost model's `opened_at` guard and the loop's ordering
+  enforce the same rule independently, so each masks a break in the other. Disabling the
+  guard moved neither golden figure, and a loop that charged financing on the wrong side
+  of the fill would be hidden by the guard in exactly the same way. The orchestrator
+  needs a direct test of the ordering — a position opened at a rollover instant and one
+  closed at a rollover instant, driven through the loop rather than through
+  `financing()` alone.
 - **Content-perturbation property test not written — before phase 5, operator-written.**
   The future-shuffle test catches order-sensitive leaks only (see "Found in phase 1").
   Perturbing the *contents* of the post-boundary bars, rather than their order, would

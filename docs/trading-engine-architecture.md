@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
+**Version:** 3.9 — `CostModel.financing` takes an explicit half-open time window instead of a `Bar` (§2.8). A bar cannot express whether a rollover happened, because that depends on where time was before it
+**Previous:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
 **Previous:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
 **Previous:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
 **Previous:** 3.5 — adds a Contents list so a cited section can be confirmed to exist without searching
@@ -287,8 +288,21 @@ class CostModel(Protocol):
 
     def fees(self, order: Order, fill_price: Decimal) -> Decimal: ...
 
-    def financing(self, position: Position, bar: Bar) -> Decimal:
-        """Overnight/swap costs. Zero for cash equities intraday."""
+    def financing(
+        self, position: Position, window_start: datetime, window_end: datetime
+    ) -> Decimal:
+        """v3.9. Overnight financing for the rollovers in
+        (window_start, window_end]. Signed: negative is charged to the
+        account, positive is paid to it.
+
+        A half-open window rather than a `Bar`, because whether a rollover
+        happened depends on where time was BEFORE this bar, which a bar
+        does not know. Windows tile, so no rollover is charged twice or
+        missed across a weekend or session gap.
+
+        Every rollover decision belongs to the implementation: when the
+        server's day turns, which weekdays are free, which is charged
+        three times, and whether the position existed yet."""
 ```
 
 Implement at minimum: `ZeroCostModel` (for engine testing only, never for evaluation), and `SpreadAwareCostModel` with spread as a function of time-of-day and volatility rather than a constant.

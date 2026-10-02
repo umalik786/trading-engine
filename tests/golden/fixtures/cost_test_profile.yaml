@@ -13,6 +13,33 @@ cost_profile:
   rules_verified: null   # test data; it warns at load and that is correct
   rules_source: null
   price_basis: bid
+  account_currency: USD
+
+  # Same clock shape as FTMO's, because the rollover has to land where the
+  # real one does for a hand figure to be checkable.
+  server_clock:
+    shape: dst_switched_offsets
+    winter_offset_hours: 2
+    summer_offset_hours: 3
+    dst_calendar: America/New_York
+
+  financing:
+    # TRIPLE DAY IS THURSDAY, not the conventional Wednesday. The fixture's
+    # only Wednesday-ending rollover falls before the fill, so a Wednesday
+    # triple day would never be charged and the 3x path would go untested.
+    # Thursday falls inside the held window. The triple day is
+    # configuration, so configuring it is testing the mechanism as it is
+    # meant to be used.
+    #
+    # Rates differ in magnitude AND the short is positive, so a mechanism
+    # that swapped the two sides, or dropped the sign, changes the figure
+    # rather than cancelling out.
+    instruments:
+      XAUUSD:
+        shape: points
+        long_rate: "-83.0"    # charged to a long
+        short_rate: "12.5"    # PAID to a short -- exercises the credit path
+        triple_weekday: Thursday
 
   instruments:
     XAUUSD:

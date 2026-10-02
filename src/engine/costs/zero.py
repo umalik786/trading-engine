@@ -17,6 +17,7 @@ not exist.
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -58,7 +59,8 @@ class ZeroCostModel:
 
     def financing(
         self,
-        position: Position,  # noqa: ARG002
-        bar: Bar,  # noqa: ARG002
+        position: Position,  # noqa: ARG002 -- nothing is charged, whatever is held
+        window_start: datetime,  # noqa: ARG002
+        window_end: datetime,  # noqa: ARG002
     ) -> Decimal:
         return Decimal(0)

@@ -61,11 +61,12 @@ is what a firm's drawdown limit watches.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from engine.core.types import Fill, require_decimal
+from engine.core.types import Fill, require_decimal, require_utc
 
 
 @dataclass(frozen=True)
@@ -122,10 +123,23 @@ class Position:
     symbol: str
     quantity: Decimal
     cost: Decimal
+    # When the position was first opened, from the fill that opened it.
+    # Financing needs it: a rollover that happened before the position
+    # existed is not charged, and "before" is a question about instants,
+    # not about calendar days. The position-conventions step will need it
+    # too, for closing the oldest ticket first.
+    opened_at: datetime
+    # Overnight financing charged so far on what is still open, signed.
+    # Held on the position rather than in realised P&L because that is
+    # what the venue does: MT5 adds swap to the open position, so it moves
+    # equity immediately, and books it to balance only on close.
+    financing_accrued: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
         require_decimal("quantity", self.quantity)
         require_decimal("cost", self.cost)
+        require_decimal("financing_accrued", self.financing_accrued)
+        require_utc("opened_at", self.opened_at)
 
     @property
     def avg_price(self) -> Decimal:
@@ -213,6 +227,13 @@ class Portfolio:
             exit_price = self._marks[symbol].for_quantity(position.quantity)
             value_now = position.quantity * exit_price
             total += (value_now - position.cost) * self._contract_size(symbol)
+            # Accrued financing sits in unrealised, so equity moves the
+            # moment it is charged while balance does not -- which is what
+            # MT5 does, and why the two diverge on a position held for
+            # days. §6.5.3 records which of the two each firm's daily loss
+            # limit watches, so the distinction decides whether financing
+            # counts against the limit yet.
+            total += position.financing_accrued
         return total
 
     def position_quantity(self, symbol: str) -> Decimal:
@@ -269,7 +290,13 @@ class Portfolio:
         existing = self._positions.get(fill.symbol)
         old_quantity = existing.quantity if existing is not None else Decimal(0)
         old_cost = existing.cost if existing is not None else Decimal(0)
+        old_accrued = existing.financing_accrued if existing is not None else Decimal(0)
         new_quantity = old_quantity + fill.quantity
+        # Preserved across adds and partial closes: the position's age is
+        # the age of the oldest lot still open. A flip resets it below,
+        # because nothing of the old position survives.
+        opened_at = existing.opened_at if existing is not None else fill.ts
+        new_accrued = old_accrued
 
         opening_or_adding = old_quantity == 0 or (old_quantity > 0) == (fill.quantity > 0)
         if opening_or_adding:
@@ -283,13 +310,27 @@ class Portfolio:
                 cost_removed = old_cost * closed_lots / abs(old_quantity)
             proceeds = closing_direction * closed_lots * fill.price
             self._realised_pnl += (proceeds - cost_removed) * contract_size
+            # Accrued financing follows the lots it belongs to. The closed
+            # share is booked to realised, which is MT5's behaviour: swap
+            # sits in the open position until the position closes, then
+            # lands on balance. The remainder is defined by subtraction, so
+            # the proportional step's rounding cancels in equity exactly as
+            # it does for the cost basis.
+            if closed_lots == abs(old_quantity):
+                accrued_released = old_accrued
+            else:
+                accrued_released = old_accrued * closed_lots / abs(old_quantity)
+            self._realised_pnl += accrued_released
+            new_accrued = old_accrued - accrued_released
             # Flipping opens the leftover at this fill's price; otherwise
             # the position keeps exactly the cost that was not removed.
-            new_cost = (
-                new_quantity * fill.price
-                if abs(fill.quantity) > abs(old_quantity)
-                else old_cost - cost_removed
-            )
+            flipping = abs(fill.quantity) > abs(old_quantity)
+            new_cost = new_quantity * fill.price if flipping else old_cost - cost_removed
+            if flipping:
+                # Nothing of the old position survives, so the new leg is a
+                # new position: it starts now and has accrued nothing.
+                opened_at = fill.ts
+                new_accrued = Decimal(0)
 
         self._realised_pnl -= fill.fees
         # A provisional mark, so that an open position always has a price
@@ -305,8 +346,35 @@ class Portfolio:
             del self._positions[fill.symbol]
         else:
             self._positions[fill.symbol] = Position(
-                symbol=fill.symbol, quantity=new_quantity, cost=new_cost
+                symbol=fill.symbol,
+                quantity=new_quantity,
+                cost=new_cost,
+                opened_at=opened_at,
+                financing_accrued=new_accrued,
             )
+
+    def accrue_financing(self, symbol: str, amount: Decimal) -> None:
+        """Add overnight financing to an open position, signed.
+
+        Negative is charged to the account, positive is paid to it. It
+        lands on the position, so it moves equity at once and balance only
+        when the position closes.
+
+        Raises if the symbol is flat: financing on a position that does not
+        exist is a question the caller should not have asked, and silently
+        discarding it would hide a rollover being charged to nothing.
+        """
+        require_decimal("amount", amount)
+        position = self._positions.get(symbol)
+        if position is None:
+            raise KeyError(
+                f"cannot accrue financing on {symbol!r}: no open position. A rollover "
+                "charged against a flat book means the caller's idea of what was held "
+                "disagrees with the ledger's"
+            )
+        self._positions[symbol] = replace(
+            position, financing_accrued=position.financing_accrued + amount
+        )
 
     def _contract_size(self, symbol: str) -> Decimal:
         try:

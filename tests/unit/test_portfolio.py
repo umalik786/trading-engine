@@ -275,14 +275,18 @@ class TestContractSizeConfiguration:
 
 class TestPositionType:
     def test_position_is_immutable(self) -> None:
-        position = Position(symbol="XAUUSD", quantity=Decimal(1), cost=Decimal("2000.00"))
+        position = Position(
+            symbol="XAUUSD", quantity=Decimal(1), cost=Decimal("2000.00"), opened_at=_TS
+        )
         with pytest.raises(FrozenInstanceError):
             position.quantity = Decimal(2)
 
     def test_avg_price_is_derived_from_cost_for_reporting(self) -> None:
         """Reading only -- this divides, and nothing in the accounting
         path goes through it."""
-        position = Position(symbol="XAUUSD", quantity=Decimal(3), cost=Decimal("6030.00"))
+        position = Position(
+            symbol="XAUUSD", quantity=Decimal(3), cost=Decimal("6030.00"), opened_at=_TS
+        )
         assert position.avg_price == Decimal("2010.00")
 
     def test_a_shorts_quantity_and_cost_are_both_negative(self) -> None:

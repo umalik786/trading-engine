@@ -16,6 +16,7 @@ Only the first exists in phase 2; the second is phase 3.
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Protocol
 
@@ -81,6 +82,39 @@ class CostModel(Protocol):
         """Commission and any per-order charge. Positive means charged."""
         ...
 
-    def financing(self, position: Position, bar: Bar) -> Decimal:
-        """Overnight/swap costs. Zero for cash equities intraday."""
+    def financing(
+        self,
+        position: Position,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> Decimal:
+        """Overnight financing for the rollovers in (window_start, window_end].
+
+        SIGNATURE CHANGED IN SPEC v3.9. It used to take a `Bar`, which
+        cannot express this question: whether a rollover happened depends
+        on where time was BEFORE this bar, and a bar does not know that.
+        An explicit half-open window does, and it tiles -- consecutive
+        windows cover every instant exactly once, so nothing is charged
+        twice and nothing is missed across a weekend or a session gap.
+
+        The returned amount is SIGNED: negative is charged to the account,
+        positive is paid to it. Two of this venue's five instruments
+        currently credit a short, so a caller that assumed financing is
+        always a cost would be wrong today.
+
+        Every rollover decision belongs to the implementation -- when the
+        server's day turns, which weekdays are free, which is charged
+        three times, whether the position existed yet. The caller supplies
+        a window and a position and asks. That division is deliberate: a
+        per-bar charge placed in the engine loop once reddened three
+        backtests that were using a zero-cost model, because the loop is
+        shared by every wiring and the cost model is not.
+
+        `Bar` is deliberately absent. The implemented shapes need rates,
+        lots and the instrument's specification, none of which is on a
+        bar. MT5's interest-based swap modes would need a price, and
+        supporting them would mean changing this signature again -- which
+        is honest, since they also need a day-count convention nobody has
+        verified.
+        """
         ...

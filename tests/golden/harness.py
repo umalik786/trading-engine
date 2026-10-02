@@ -25,22 +25,43 @@ fill path is settled, this should be deleted rather than extended.
 
 WHAT ONE BAR DOES, in order
 ---------------------------
-  1. fill any order queued by the previous bar's decision, against this bar
-  2. update the feature pipeline with this bar
-  3. mark the portfolio to this bar's close, asking the cost model what a
+  1. charge rollovers in (previous bar's close, this bar's open], against
+     the position as it stood BEFORE this bar's fills
+  2. fill any order queued by the previous bar's decision, at this bar's open
+  3. charge rollovers in (this bar's open, this bar's close], against the
+     position as it stands AFTER those fills
+  4. update the feature pipeline with this bar
+  5. mark the portfolio to this bar's close, asking the cost model what a
      long and a short could each exit at
-  4. ask the strategy for its target positions
-  5. pass each target through the sizer
-  6. turn any difference between the sized target and actual into one
+  6. ask the strategy for its target positions
+  7. pass each target through the sizer
+  8. turn any difference between the sized target and actual into one
      market order, queued for the next bar
 
-Step 1 happening before step 4 is the entire point: a decision made at bar
-N's close cannot be acted on until bar N+1 exists.
+Step 2 happening before step 6 is the entire point of the fill rule: a
+decision made at bar N's close cannot be acted on until bar N+1 exists.
 
-Step 3 asks the cost model rather than using `bar.close` directly, because
+STEPS 1 AND 3 ARE SPLIT AROUND THE FILL, and that is what makes the size
+at each rollover exact rather than approximate. Rollovers land on bar
+boundaries and fills land on bar opens, so a single charge per bar would
+have to guess which side of the fill a boundary rollover belonged to. Two
+windows do not guess. The consequences are the two cases worth stating
+plainly:
+
+- A position OPENED at exactly a rollover instant is NOT charged for it.
+  The instant falls in window 1, which is evaluated before the fill, when
+  the book was still flat.
+- A position CLOSED at exactly a rollover instant IS charged for it. The
+  same window 1 is evaluated before the closing fill, while the position
+  is still held.
+
+Which is the right way round: you owe for the night you held, and you do
+not owe for one that ended before you were in.
+
+Step 5 asks the cost model rather than using `bar.close` directly, because
 what a position is worth is what it could be closed at, and that differs
 by direction once there is a spread. The same cost model answers for the
-fill in step 1, so the two cannot drift apart.
+fill in step 2, so the two cannot drift apart.
 """
 
 from __future__ import annotations
@@ -78,6 +99,9 @@ class BacktestResult:
     final_equity: Decimal
     realised_pnl: Decimal
     unrealised_pnl: Decimal
+    # Financing sitting on still-open positions. Separate from realised
+    # because that is where the venue keeps it until a position closes.
+    financing_accrued: Decimal
     orders: tuple[Order, ...]
     fills: tuple[Fill, ...]
     unfilled_orders: tuple[Order, ...]
@@ -150,8 +174,17 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
     orders: list[Order] = []
     fills: list[Fill] = []
 
+    last_close: dict[str, datetime] = {}
     for bar_index, bar in enumerate(bars):
+        # 1. rollovers up to this bar's open, on the pre-fill position.
+        previous_close = last_close.get(bar.symbol)
+        if previous_close is not None:
+            _accrue_financing(portfolio, costs, bar.symbol, previous_close, bar.ts_open)
+        # 2. fills at this bar's open.
         fills.extend(broker.fill_pending(bar))
+        # 3. rollovers inside this bar, on the post-fill position.
+        _accrue_financing(portfolio, costs, bar.symbol, bar.ts_open, bar.ts_close)
+        last_close[bar.symbol] = bar.ts_close
         features.update(bar)
         snapshot = features.snapshot()
         portfolio.mark(
@@ -182,6 +215,10 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
         final_equity=portfolio.equity,
         realised_pnl=portfolio.realised_pnl,
         unrealised_pnl=portfolio.unrealised_pnl,
+        financing_accrued=sum(
+            (position.financing_accrued for position in portfolio.positions().values()),
+            Decimal(0),
+        ),
         orders=tuple(orders),
         fills=tuple(fills),
         unfilled_orders=tuple(broker.pending_orders()),
@@ -244,6 +281,29 @@ def _order_for_target(
         stop_price=None,
         intent_id=identifier,
     )
+
+
+def _accrue_financing(
+    portfolio: Portfolio,
+    costs: CostModel,
+    symbol: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> None:
+    """Ask the cost model what the rollovers in this window cost, and put
+    it on the position.
+
+    The loop contributes a window and a position and nothing else. It does
+    no date arithmetic, counts no nights, and knows nothing about weekends
+    or triple days -- all of that is behind the `CostModel` seam, where a
+    bug in it cannot reach a run using `ZeroCostModel`.
+    """
+    position = portfolio.positions().get(symbol)
+    if position is None:
+        return
+    amount = costs.financing(position, window_start, window_end)
+    if amount != 0:
+        portfolio.accrue_financing(symbol, amount)
 
 
 def _client_order_id(strategy_name: str, symbol: str, bar: Bar, intent_index: int) -> str:

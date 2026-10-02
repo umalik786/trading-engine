@@ -32,19 +32,29 @@
 # It exists here because MT5 reports spread as an integer count of points
 # and the feed converts to price units on the way in. Quoted as strings so
 # they are parsed as exact decimal text rather than through a float.
+#
+# quote_currency is checked against the cost profile's account_currency.
+# All five here are USD-quoted, so no FX conversion is needed anywhere in
+# the cost model -- and a future instrument that isn't will raise rather
+# than be converted at a rate nobody verified.
 instruments:
   NAS100:
     contract_size: 1
     point: "0.01"
+    quote_currency: USD
   US500:
     contract_size: 1
     point: "0.01"
+    quote_currency: USD
   EURUSD:
     contract_size: 100000
     point: "0.00001"
+    quote_currency: USD
   XAUUSD:
     contract_size: 100
     point: "0.01"
+    quote_currency: USD
   XAGUSD:
     contract_size: 5000
     point: "0.001"
+    quote_currency: USD

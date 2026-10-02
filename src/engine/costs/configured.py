@@ -43,15 +43,35 @@ Two different bars, deliberately.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
+from engine.core.clock import (
+    DstSwitchedServerClock,
+    IanaServerClock,
+    ServerClock,
+)
+from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import Position
 from engine.core.types import Bar, Order
 from engine.costs.base import BookSnapshot
-from engine.costs.profile import CostProfile, InstrumentCosts
+from engine.costs.profile import CostProfile, InstrumentCosts, ServerClockConfig, SwapRates
 
 _TWO = Decimal(2)
+
+
+def build_server_clock(config: ServerClockConfig | None) -> ServerClock | None:
+    """Turn clock configuration into a clock. Mechanism here, shape there."""
+    if config is None:
+        return None
+    if config.shape == "iana":
+        return IanaServerClock(zone=config.zone)  # type: ignore[arg-type]
+    return DstSwitchedServerClock(
+        winter_offset=timedelta(hours=config.winter_offset_hours),  # type: ignore[arg-type]
+        summer_offset=timedelta(hours=config.summer_offset_hours),  # type: ignore[arg-type]
+        dst_calendar=config.dst_calendar,  # type: ignore[arg-type]
+    )
 
 
 class ConfiguredCostModel:
@@ -64,9 +84,35 @@ class ConfiguredCostModel:
     the model can perfectly well hold.
     """
 
-    def __init__(self, profile: CostProfile, contract_sizes: Mapping[str, Decimal]) -> None:
+    def __init__(self, profile: CostProfile, instruments: Mapping[str, InstrumentSpec]) -> None:
         self._profile = profile
-        self._contract_sizes = dict(contract_sizes)
+        self._instruments = dict(instruments)
+        self._clock = build_server_clock(profile.server_clock)
+        self._check_currencies()
+
+    def _check_currencies(self) -> None:
+        """Every money figure this model produces is in the account
+        currency. An instrument quoted in anything else would need an FX
+        rate, and there is none in this project, so this raises at
+        construction rather than converting at some unexamined rate or --
+        worse -- not converting and reporting the number anyway.
+
+        All five instruments on this venue are USD-quoted against a USD
+        account, so this is an assumption made checkable rather than a
+        conversion deferred.
+        """
+        account = self._profile.account_currency
+        mismatched = {
+            symbol: spec.quote_currency
+            for symbol, spec in self._instruments.items()
+            if spec.quote_currency != account
+        }
+        if mismatched:
+            raise ValueError(
+                f"account currency is {account!r} but these instruments are quoted "
+                f"otherwise: {mismatched}. Converting would need an FX rate this "
+                "project does not have, so costs for them cannot be expressed"
+            )
 
     def resolved_spread(self, bar: Bar) -> Decimal:
         """The spread to use for `bar`, after deciding what a zero means.
@@ -159,19 +205,70 @@ class ConfiguredCostModel:
 
         if shape in ("per_lot_per_side", "per_lot_round_turn"):
             return lots * value
-        notional = lots * self._contract_size_for(order.symbol) * fill_price
+        notional = lots * self._spec_for(order.symbol).contract_size * fill_price
         return notional * value / Decimal(100)
 
     def financing(
         self,
-        position: Position,  # noqa: ARG002 -- phase 3b
-        bar: Bar,  # noqa: ARG002
+        position: Position,
+        window_start: datetime,
+        window_end: datetime,
     ) -> Decimal:
-        """Zero until phase 3b. Appendix C.1 is explicit that returning
-        zero here permanently would be a mistake: anything held across
-        days pays financing, and a strategy that looks profitable without
-        it may not be."""
-        return Decimal(0)
+        """Signed financing for every rollover in (window_start, window_end].
+
+        A rollover is charged only if the position was already open at
+        that instant -- `position.opened_at` is compared against the
+        instant itself, not against its calendar day, because a position
+        filled at 23:00 did not exist at the 22:00 rollover even though
+        both fall on the same day and in the same session.
+
+        Weekends cost nothing and one configured weekday costs triple. A
+        rollover is labelled by the server day that is ENDING, so the
+        rollover from Wednesday into Thursday is the "Wednesday night"
+        one. Labelling it by the day beginning would move every triple
+        charge by a day; the convention is recorded as unverified in
+        docs/state.md until it is read off a real deal record.
+        """
+        rates = self._financing_for(position.symbol)
+        if rates.shape == "disabled":
+            return Decimal(0)
+
+        nights = Decimal(0)
+        for instant in self._clock.rollover_instants(window_start, window_end):
+            if instant <= position.opened_at:
+                # The position did not exist yet. `<=` rather than `<`
+                # because a position opened at exactly the rollover
+                # instant is not charged for it -- you do not owe for a
+                # night that ended as you came in. The engine loop also
+                # arrives at this answer, by evaluating the pre-fill
+                # window before applying the fill, but the rule belongs
+                # here too: this is the component that owns rollover
+                # decisions, and a different caller must not be able to
+                # get it wrong by slicing its windows differently.
+                continue
+            weekday = self._clock.server_date_ending(instant).strftime("%A")
+            if weekday in ("Saturday", "Sunday"):
+                continue  # market shut; the triple day collects these
+            nights += Decimal(3) if weekday == rates.triple_weekday else Decimal(1)
+
+        if nights == 0:
+            return Decimal(0)
+        rate = rates.long_rate if position.quantity > 0 else rates.short_rate
+        return nights * abs(position.quantity) * self._rate_to_money(position.symbol, rates, rate)
+
+    def _rate_to_money(self, symbol: str, rates: SwapRates, rate: Decimal) -> Decimal:
+        """One lot, one night, in account currency. Sign preserved.
+
+        `points` is MT5's mode 1, which every instrument on this venue
+        uses. The money value of one point per lot is
+        `point x contract_size`, which the 2026-09-11 verification run
+        confirms equals the broker's own `tick_value` for all five -- two
+        independent routes to the same figure.
+        """
+        if rates.shape == "currency_per_lot":
+            return rate
+        spec = self._spec_for(symbol)
+        return rate * spec.point * spec.contract_size
 
     def _costs_for(self, symbol: str) -> InstrumentCosts:
         try:
@@ -183,11 +280,36 @@ class ConfiguredCostModel:
                 "silently price that instrument as free to trade"
             ) from None
 
-    def _contract_size_for(self, symbol: str) -> Decimal:
+    def _financing_for(self, symbol: str) -> SwapRates:
+        """The swap configuration for a symbol, or an error.
+
+        A MISSING ENTRY IS NOT ZERO. The same rule as a missing commission
+        entry and a missing fallback spread: a gap in configuration must
+        never make trading cheaper than it is. Holding a position
+        overnight costs something on every instrument this venue offers,
+        so silence here would be the most flattering possible reading of
+        an omission -- and the resulting backtest would look better than
+        reality for a reason no test would surface.
+
+        "This instrument has no swap" is a real and legitimate claim. It
+        is made by writing `shape: disabled`, which someone has to type.
+        """
         try:
-            return self._contract_sizes[symbol]
+            return self._profile.financing.instruments[symbol]
         except KeyError:
             raise KeyError(
-                f"no contract size configured for {symbol!r}, needed for pct_notional "
-                "commission"
+                f"cost profile {self._profile.profile!r} has no financing entry for "
+                f"{symbol!r}. There is deliberately no default: an omission would "
+                "price overnight holding as free. If the instrument genuinely has no "
+                "swap, say so with shape: disabled"
+            ) from None
+
+    def _spec_for(self, symbol: str) -> InstrumentSpec:
+        try:
+            return self._instruments[symbol]
+        except KeyError:
+            raise KeyError(
+                f"no instrument specification configured for {symbol!r} -- contract "
+                "size and point size come from config/instruments.yaml, and there is "
+                "deliberately no default for either"
             ) from None

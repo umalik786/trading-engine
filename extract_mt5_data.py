@@ -38,11 +38,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import MetaTrader5 as mt5
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from engine.core.clock import DstSwitchedServerClock
 
 # Internal name -> broker symbol. Verified against a live FTMO account,
 # docs/state.md, 2026-09-10. This mapping is the only broker-specific
@@ -72,14 +73,18 @@ DATA_ROOT = Path("C:/trading/data/raw")
 
 # --- Server timezone: verified 2026-09-17, spec Appendix A.6 ---------------
 
-_NEW_YORK = ZoneInfo("America/New_York")
-
 SERVER_TZ_VERIFIED_DATE = "2026-09-17"
 SERVER_TZ_SOURCE = "https://ftmo.com/en/blog/trading-updates/trading-update-5-mar-2026/"
 SERVER_TZ_CONVENTION = (
     "GMT+2 in winter, GMT+3 in summer, transitioning on the United States "
     "daylight-saving calendar rather than the European one. No IANA "
     "timezone matches this combination."
+)
+
+FTMO_SERVER_CLOCK = DstSwitchedServerClock(
+    winter_offset=timedelta(hours=2),
+    summer_offset=timedelta(hours=3),
+    dst_calendar="America/New_York",
 )
 
 
@@ -110,13 +115,14 @@ def ftmo_server_utc_offset(reference: datetime) -> timedelta:
     itself brackets each transition with a multi-hour trading halt rather
     than an instantaneous flip; see the verification notes) or UTC-aware
     (treated exactly).
+
+    The arithmetic now lives in `engine.core.clock`, because financing
+    needs the same server clock to know when the daily rollover falls. Two
+    definitions of this would eventually disagree, and the one that
+    mislabelled a timestamp would be the one nobody was looking at. This
+    stays as a thin alias so the rest of the script reads unchanged.
     """
-    if reference.tzinfo is None:
-        probe = reference.replace(tzinfo=_NEW_YORK)
-    else:
-        probe = reference.astimezone(_NEW_YORK)
-    is_dst = probe.dst() != timedelta(0)
-    return timedelta(hours=3) if is_dst else timedelta(hours=2)
+    return FTMO_SERVER_CLOCK.utc_offset(reference)
 
 
 def server_epoch_to_utc(epoch_seconds: int) -> datetime:

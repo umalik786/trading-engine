@@ -20,6 +20,66 @@ cost_profile:
   rules_verified: null   # unset -> warns at load, per 6.5.6
   rules_source: null
   price_basis: bid       # UNVERIFIED -- chart_mode never captured
+  account_currency: USD
+
+  # The trade server's clock, used to place the daily rollover. VERIFIED
+  # 2026-09-17 from FTMO's own trading updates: EET-magnitude offsets on
+  # the UNITED STATES daylight-saving calendar, a combination no IANA zone
+  # describes. NOT the same clock as the 6.5 accounting day, which runs in
+  # Prague on the European calendar -- see ftmo_2step.yaml.
+  server_clock:
+    shape: dst_switched_offsets
+    winter_offset_hours: 2
+    summer_offset_hours: 3
+    dst_calendar: America/New_York
+    provenance:
+      verified: "2026-09-17"
+      source: "https://ftmo.com/en/blog/trading-updates/trading-update-5-mar-2026/"
+
+  financing:
+    # These swap values ARE verified -- read from symbol_info() on a live
+    # FTMO account. Unlike everything else in this file, they carry a real
+    # date and source, which is why provenance is per section.
+    #
+    # Thirty days rather than ninety: brokers revise swap rates far more
+    # often than they revise a rulebook, so these go stale sooner.
+    provenance:
+      verified: "2026-09-11"
+      source: "C:\\trading\\data\\mt5-verification-2026-09-11.json"
+      stale_after_days: 30
+    #
+    # triple_weekday is NOT verified. symbol_info().swap_rollover3days was
+    # never captured, so Wednesday below is the common convention rather
+    # than a reading from this account. Confirm by holding a position over
+    # a Wednesday night on the trial and reading the swap off the deal
+    # record. Note also that "Wednesday" means the rollover from Wednesday
+    # into Thursday -- see docs/state.md on the labelling convention.
+    instruments:
+      NAS100:
+        shape: points
+        long_rate: "-514.2"
+        short_rate: "-102.6"
+        triple_weekday: Wednesday   # UNVERIFIED
+      US500:
+        shape: points
+        long_rate: "-130.92"
+        short_rate: "-29.24"
+        triple_weekday: Wednesday   # UNVERIFIED
+      EURUSD:
+        shape: points
+        long_rate: "-9.47"
+        short_rate: "0.35"          # positive: a credit to a short
+        triple_weekday: Wednesday   # UNVERIFIED
+      XAUUSD:
+        shape: points
+        long_rate: "-83.0"
+        short_rate: "-8.3"
+        triple_weekday: Wednesday   # UNVERIFIED
+      XAGUSD:
+        shape: points
+        long_rate: "-15.2"
+        short_rate: "0.5"           # positive: a credit to a short
+        triple_weekday: Wednesday   # UNVERIFIED
 
   instruments:
     NAS100:

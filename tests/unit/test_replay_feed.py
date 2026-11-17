@@ -421,6 +421,27 @@ class TestServerTimezoneProvenance:
             _construct_feed(tmp_path)
 
 
+class TestM1:
+    """M1 is read like any other timeframe: each bar closes one minute after
+    it opens. Added 2026-11-17 for the M1 extraction."""
+
+    def test_m1_bars_close_one_minute_after_they_open(self, tmp_path: Path) -> None:
+        start = datetime(2024, 1, 2, tzinfo=UTC)
+        rows = [_row(start + timedelta(minutes=i), "1.1000") for i in range(5)]
+        _write_year(tmp_path, "EURUSD", "M1", 2024, rows)
+        feed = ReplayFeed(
+            instrument="EURUSD",
+            timeframe="M1",
+            range_start=start,
+            range_end=start + timedelta(hours=1),
+            point=_POINT,
+            data_root=tmp_path,
+        )
+        bars = list(feed.stream())
+        assert len(bars) == 5
+        assert all(b.ts_close - b.ts_open == timedelta(minutes=1) for b in bars)
+
+
 class TestBarsGenuineFrom:
     """A series can hold bars of another width filed under its timeframe --
     on this venue, index "M15" before September 2021 is daily then hourly

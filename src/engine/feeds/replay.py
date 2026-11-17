@@ -22,10 +22,13 @@ DEFAULT_DATA_ROOT = Path("C:/trading/data/raw")
 # parquet stores (extract_mt5_data.py stores MT5's own "time" field, which is
 # bar-open). ASSUMPTION: every bar in a given timeframe's series spans
 # exactly this fixed duration, so ts_close = ts_open + duration. True for
-# M15/H1/H4 on this venue. A wrong duration here would silently shift every
+# M1/M15/H1/H4 on this venue from each series' bars_genuine_from in
+# config/instruments.yaml (before it, the index history holds bars of other
+# widths). A wrong duration here would silently shift every
 # ts_close by one bar width -- there is no independent check against it,
 # since the parquet files carry no ts_close of their own.
 TIMEFRAME_DURATIONS = {
+    "M1": timedelta(minutes=1),
     "M15": timedelta(minutes=15),
     "H1": timedelta(hours=1),
     "H4": timedelta(hours=4),

@@ -118,6 +118,14 @@ def _write_config(path: Path, genuine_from: str | None) -> Path:
     return path
 
 
+def test_the_command_inspects_m1(spacing, tmp_path):
+    """Hourly bars filed under M1, as the index history has, must be caught."""
+    hourly = _every(FEB, APR, timedelta(hours=1))
+    _write_series(tmp_path / "data", "NAS100", "M1", hourly)
+    config = _write_config(tmp_path / "instruments.yaml", None)
+    assert spacing.main(["--data-root", str(tmp_path / "data"), "--config", str(config)]) == 1
+
+
 def test_the_command_fails_without_the_config_date(spacing, tmp_path):
     _write_series(tmp_path / "data", "NAS100", "M15", THREE_TIERS)
     config = _write_config(tmp_path / "instruments.yaml", None)

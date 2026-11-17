@@ -63,6 +63,7 @@ class TestBarsGenuineFrom:
         genuine = load_bars_genuine_from(INSTRUMENTS_CONFIG)
         for symbol in ("NAS100", "US500"):
             assert genuine[symbol] == {
+                "M1": datetime(2021, 9, 15, tzinfo=UTC),
                 "M15": datetime(2021, 9, 15, tzinfo=UTC),
                 "H1": datetime(2021, 1, 22, tzinfo=UTC),
                 "H4": datetime(2021, 1, 22, tzinfo=UTC),

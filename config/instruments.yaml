@@ -46,17 +46,23 @@
 # daily bars filed under M15, H1 and H4 until 2021-01-21, then hourly bars
 # filed under M15 until 2021-09-14. First genuine 15-minute spacing:
 # NAS100 2021-09-14 06:30 UTC, US500 02:30. First genuine H1/H4 spacing:
-# 2021-01-21. Each date is rounded forward to the next UTC midnight so a
+# 2021-01-21. M1 VERIFIED 2026-11-17 the same way after the first M1
+# extraction: the same tiers (daily bars to 2020-12, hourly 2021-01 to
+# 2021-08, commonest gap 1:00:00 every month); first genuine 1-minute
+# spacing NAS100 2021-09-14 06:31 UTC, US500 02:41; from there the
+# commonest gap is 1 minute (NAS100 105,423 of 105,505 gaps in 2021).
+# Each date is rounded forward to the next UTC midnight so a
 # partial day never counts. The raw files are left as the venue returned
 # them (spec B.6); this is where the engine is told not to believe them.
-# EURUSD, XAUUSD and XAGUSD were clean on all three timeframes back to
-# their first year.
+# EURUSD, XAUUSD and XAGUSD were clean on all four timeframes (M1, M15,
+# H1, H4) back to their first year.
 instruments:
   NAS100:
     contract_size: 1
     point: "0.01"
     quote_currency: USD
     bars_genuine_from:
+      M1: "2021-09-15T00:00:00Z"
       M15: "2021-09-15T00:00:00Z"
       H1: "2021-01-22T00:00:00Z"
       H4: "2021-01-22T00:00:00Z"
@@ -65,6 +71,7 @@ instruments:
     point: "0.01"
     quote_currency: USD
     bars_genuine_from:
+      M1: "2021-09-15T00:00:00Z"
       M15: "2021-09-15T00:00:00Z"
       H1: "2021-01-22T00:00:00Z"
       H4: "2021-01-22T00:00:00Z"

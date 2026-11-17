@@ -65,6 +65,7 @@ SYMBOL_MAP = {
 }
 
 TIMEFRAMES = {
+    "M1": mt5.TIMEFRAME_M1,
     "M15": mt5.TIMEFRAME_M15,
     "H1": mt5.TIMEFRAME_H1,
     "H4": mt5.TIMEFRAME_H4,

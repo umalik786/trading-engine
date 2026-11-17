@@ -2,7 +2,18 @@
 
 **Phase:** 3b — COMPLETE (2026-10-02). Phase 3a complete 2026-10-01,
 phase 2 complete 2026-09-30.
-**Last session:** 2026-10-02
+**Last session:** 2026-11-17
+
+## Machine replaced, 2026-11-17
+
+- Laptop replaced. Repositories recovered from GitHub; nothing committed was lost,
+  including the golden-test fixtures under `tests/golden/fixtures/`.
+- **Market data in `C:\trading\data` was lost** — it sits outside the repo by design,
+  so GitHub held no copy. It must be re-extracted before any backtest beyond the
+  committed fixtures. Re-extraction needs a live FTMO trial and a new login (see
+  "FTMO trial accounts expire" under phase 2).
+- **New rule: back up `C:\trading\data` off-machine after every extraction.** Keeping
+  data outside the repo protects it from `git clean`, not from losing the machine.
 
 ## Phase 3b — financing, COMPLETE 2026-10-02
 
@@ -388,19 +399,12 @@ trial session is not wasted. Each needs a reading, not an opinion.
 
 ## Next
 
-- **Phase 3 — the spec's phase 3 (§9): cost model (spread, commission, slippage) and
-  sizer.** Exit criterion: `AlwaysLong` matches buy-and-hold minus a cost figure the
-  operator derives by hand. The harness already takes a `cost_model` argument. Check it
-  against the 02:45-start fixture, which is the one that can fail for the right reason.
-  Watch for spread double-counting: charged at entry and again when marking the open
-  position. A single round-number cost figure passes either way. The phase 3
-  exit-criterion fixtures must be designed to separate the two, e.g. two fixtures with
-  different bar counts, with the operator's hand-computed cost figure for each.
-  Phase 3 exit includes AlwaysShort with spread, not just AlwaysLong. MT5 bars are
-  normally bid-based, so a long pays spread on entry and a short pays it in its
-  valuation while open; a cost model that only adds spread to buys passes AlwaysLong and
-  overstates every short. Verify FTMO bars are bid-based, and check whether extraction
-  kept copy_rates' per-bar spread column.
+- **Phase 3c: slippage, the statistical spread model of Appendix C.1, and a real
+  sizer.** 3a (spread, commission) and 3b (financing) are complete — see above.
+  Slippage is already wired at zero; 3c gives it a real model. Same standard as 3a/3b:
+  operator-computed figures before the engine runs, for both `AlwaysLong` and
+  `AlwaysShort`, on a fixture checked for whether it can tell the correct behaviour from
+  the bug it exists to catch, and deliberate breaks with predicted moves.
 - **Then position conventions — netting and hedging — as a step after phase 3 and before
   phase 4**, per the position-mode decision above, including the persistence question:
   what the engine must record itself when the broker is authoritative for positions.
@@ -409,6 +413,9 @@ trial session is not wasted. Each needs a reading, not an opinion.
   both conventions, and `AlwaysLong` never partially closes, so phase 3's exit criterion
   does not depend on which convention is in force. Phase 4's does — firm loss limits
   anchor to balance, and the convention decides how realised P&L feeds it.
+- **Then design the real orchestrator (`core/engine.py`), before phase 4.** The risk
+  gate lives inside the bar loop, so phase 4 cannot start until that loop exists. See
+  the orchestrator entry under "Carried-forward gaps".
 
 ## Carried-forward gaps (not blocking)
 

@@ -41,9 +41,9 @@ These are design principles from the spec, restated here because they are the on
 
 ## Current state
 
-**Phase: 2 — complete (2026-09-30). Phase 3 is next: cost model and sizer, beginning with both position conventions (netting and hedging).**
+**Phase: 3 — in progress. 3a (spread, commission) complete 2026-10-01; 3b (overnight financing) complete 2026-10-02. Next is 3c: slippage, the statistical spread model of Appendix C.1, and a real sizer. Then position conventions (netting and hedging), then orchestrator design, before phase 4.**
 
-Exit criterion met: `AlwaysLong` matched operator-computed buy-and-hold to the cent on two real XAUUSD M15 weeks, 5718.00 and 4740.00, both figures computed independently before the engine was run.
+Phase 2 exit criterion met (2026-09-30): `AlwaysLong` matched operator-computed buy-and-hold to the cent on two real XAUUSD M15 weeks, 5718.00 and 4740.00, both figures computed independently before the engine was run.
 
 Note for any future fixture: only the 02:45-start fixture distinguishes filling at the next bar's open from filling at the deciding bar's close. In the 00:00-start fixture those two rules give the same answer, so it passes either way. A fixture must be checked for whether it can tell correct behaviour from the bug it exists to catch — see `docs/state.md`.
 

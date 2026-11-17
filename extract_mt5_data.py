@@ -25,6 +25,12 @@ column) and the input (year_bounds request windows) needed converting; see
 FTMO_SERVER_UTC_OFFSET below for the correction and why it can't be a plain
 IANA zone. docs/state.md's CRITICAL section has the full incident writeup.
 
+FORMING-BAR FIX (2026-11-17): MT5 also returns the bar still forming at the
+moment of the request, with a partial high, low and close, and this script
+used to store it. Each job now takes a cutoff time before it fetches
+anything and drops every bar that closes after it. The cutoff is written to
+the manifest as complete_through_utc: everything at or before it is final.
+
 Prerequisites:
   - MetaTrader 5 terminal is running and logged in
   - Run with:  uv run --extra mt5 python extract_mt5_data.py [--force]
@@ -44,6 +50,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from engine.core.clock import DstSwitchedServerClock
+from engine.feeds.replay import TIMEFRAME_DURATIONS
 
 # Internal name -> broker symbol. Verified against a live FTMO account,
 # docs/state.md, 2026-09-10. This mapping is the only broker-specific
@@ -219,6 +226,20 @@ def fetch_year(
     return in_range
 
 
+def drop_unfinished_bars(
+    converted_rates: list[tuple[datetime, object]], bar_width: timedelta, cutoff: datetime
+) -> list[tuple[datetime, object]] | None:
+    """Keep only bars that had closed by `cutoff`. A bar closing exactly at
+    the cutoff is kept. Returns None if nothing is left, like fetch_year.
+
+    The width comes from ReplayFeed's TIMEFRAME_DURATIONS, the same table
+    that gives every stored bar its ts_close, so the two cannot disagree
+    about when a bar ends.
+    """
+    finished = [(ts, r) for ts, r in converted_rates if ts + bar_width <= cutoff]
+    return finished or None
+
+
 def rates_to_table(converted_rates: list[tuple[datetime, object]], digits: int) -> pa.Table:
     """Store exactly what MT5 returns: bar-open time (already corrected to
     true UTC by the caller), OHLC, tick volume, spread and real volume. No
@@ -250,7 +271,11 @@ def extract_job(job: ExtractionJob, force: bool) -> dict:
     out_dir = DATA_ROOT / job.internal_name / job.timeframe_label
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    current_year = datetime.now(UTC).year
+    # Taken before anything is fetched, so every bar closing at or before it
+    # had finished by the time MT5 was asked for it.
+    cutoff = datetime.now(UTC)
+    bar_width = TIMEFRAME_DURATIONS[job.timeframe_label]
+    current_year = cutoff.year
     per_year_counts: dict[str, int] = {}
     earliest: datetime | None = None
     latest: datetime | None = None
@@ -264,6 +289,8 @@ def extract_job(job: ExtractionJob, force: bool) -> dict:
             print(f"    {year}  {count:>7,} bars  (on disk, skipped)")
         else:
             converted_rates = fetch_year(job.broker_symbol, job.mt5_timeframe, year)
+            if converted_rates is not None:
+                converted_rates = drop_unfinished_bars(converted_rates, bar_width, cutoff)
             if converted_rates is None:
                 # A re-fetch that now correctly finds nothing must not leave
                 # a stale file from an earlier (possibly buggy) run behind.
@@ -293,6 +320,7 @@ def extract_job(job: ExtractionJob, force: bool) -> dict:
         "decimal_precision": 10 + job.digits,
         "decimal_scale": job.digits,
         "total_bars": total,
+        "complete_through_utc": cutoff.isoformat(),
         "earliest_bar_utc": earliest.isoformat() if earliest else None,
         "latest_bar_utc": latest.isoformat() if latest else None,
         "bars_per_year": per_year_counts,
@@ -319,6 +347,7 @@ def write_manifest(out_dir: Path, data: dict, server: str, terminal_build: int) 
             "source": SERVER_TZ_SOURCE,
         },
         "extracted_at_utc": datetime.now(UTC).isoformat(),
+        "complete_through_utc": data["complete_through_utc"],
         "earliest_bar_utc": data["earliest_bar_utc"],
         "latest_bar_utc": data["latest_bar_utc"],
         "total_bars": data["total_bars"],

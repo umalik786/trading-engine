@@ -544,6 +544,23 @@ paste or summarise the output into this file before closing the session.
   on the 06:30 bar, which today's code stores. After re-extraction, a live check: for
   every instrument and timeframe, the last stored bar's close is at or before
   `complete_through_utc`.
+- **IMPLEMENTED 2026-11-17.** One change from the proposal: the cutoff is taken at the
+  start of each instrument/timeframe job, not once per run. It is still taken before
+  that job fetches anything, which is the property that matters. Each manifest then
+  records the cutoff that applies to its own files, and the extractor's function
+  signatures are unchanged, so the test could run against the old code. Test:
+  `tests/unit/test_extract_drops_forming_bar.py` (`requires_mt5`), clock frozen at
+  06:30:00 UTC; bars closing 06:15 and exactly 06:30 kept, the one opening 06:30
+  dropped. **Against the old code both tests failed for the right reason**: "the bar
+  still forming at the cutoff was stored", and no `complete_through_utc` in the
+  manifest. Both pass after the fix.
+  Re-extraction ~06:54 UTC: the fifteen `2026.parquet` files deleted and re-fetched
+  (all other years skipped from disk). Live check: on all 15 series, the last stored
+  bar closes at or before the manifest's `complete_through_utc`. On H1, the bar
+  opening 06:00 was still forming at 06:54 and was dropped. DST check: all 3 passed.
+  pytest: 294 passed, 6 deselected; with `-m requires_mt5`: 6 passed.
+  **Second backup:** `G:\My Drive\trading-data-backup\2026-11-17b`, 385 files and
+  313,533,297 bytes at both ends.
 
 **(b) Index history before September 2021 is not what its folder says.**
 

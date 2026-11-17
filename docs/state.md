@@ -12,8 +12,21 @@ phase 2 complete 2026-09-30.
   so GitHub held no copy. It must be re-extracted before any backtest beyond the
   committed fixtures. Re-extraction needs a live FTMO trial and a new login (see
   "FTMO trial accounts expire" under phase 2).
+- **Until then, the two future-shuffle property tests fail** (292 passed, 2 failed on
+  2026-11-17): `tests/properties/test_future_shuffle.py` reads 1000 bars from 2026-01-01
+  out of `C:\trading\data`, and gets none. Expected, not a regression.
 - **New rule: back up `C:\trading\data` off-machine after every extraction.** Keeping
   data outside the repo protects it from `git clean`, not from losing the machine.
+
+## Settled, 2026-11-17
+
+- **Extraction keeps the per-bar spread column.** `extract_mt5_data.py:237` stores
+  MT5's `spread` field as an integer point count on every bar, and the 3a fixtures carry
+  it. Still open, and relevant to C.1: MT5 does not clearly document whether that figure
+  is the spread at one instant of the bar or the bar's minimum. If it is the minimum, a
+  distribution built from it understates the pessimistic tail C.1 asks for. The tick
+  sample (trial-session plan, step 4) can answer this by comparing each bar's stored
+  spread with the ask - bid of the ticks inside it.
 
 ## Phase 3b — financing, COMPLETE 2026-10-02
 
@@ -381,24 +394,52 @@ matches among the 50 differing snapshots.
 
 - Nothing open.
 
-## Trial-session checklist
+## Trial-session plan — re-extraction
 
-Things that can only be settled on a live terminal or a live account, collected so a
-trial session is not wasted. Each needs a reading, not an opinion.
+One session on a fresh FTMO trial, in this order. Every script is read only and places
+no orders. Run each from `C:\trading\engine`. Each step needs a reading, not an opinion:
+paste or summarise the output into this file before closing the session.
+
+0. **Before the session:** confirm a US non-farm payrolls release falls inside the tick
+   window (default 2026-10-19 to 2026-11-14 UTC) on the BLS release calendar. If not,
+   pick a window that contains one and pass it in step 4.
+1. **Depth per instrument** — `uv run --extra mt5 python verify_mt5.py`. Record earliest
+   date per instrument. Two cautions: a single request caps near 100,000 bars, so its
+   M5/M15/H1 counts can understate depth — trust D1 here, and step 3's per-year counts
+   for M15; and its report labels server time as UTC without converting, so its dates
+   are off by 2-3 hours (immaterial for depth).
+2. **Bid basis** — `uv run --extra mt5 python check_chart_mode.py`. Record `chart_mode`
+   per symbol (0 = bid, 1 = last). Also prints `swap_rollover3days`, the triple-swap
+   weekday, never captured before. Do not edit `config/cost_ftmo_demo.yaml` in the
+   session; record the reading, change config after.
+3. **Bars** — `uv run --extra mt5 python extract_mt5_data.py`. Check the per-year counts
+   for any year that looks truncated.
+4. **Ticks** — `uv run --extra mt5 python extract_mt5_ticks.py` (or with
+   `--start`/`--end`). Weekends show zero; a weekday showing zero means the server did
+   not serve that day.
+5. **DST check** — `uv run python check_dst_boundaries.py`. Must print `All 3 passed.`
+   Any FAIL: stop, do not use the data, do not back it up over a good copy.
+   Then `uv run pytest`: the two future-shuffle tests, red since the data was lost,
+   should be green again.
+6. **Back up** — copy all of `C:\trading\data` off the machine, e.g.
+   `robocopy C:\trading\data <backup location> /E`, then compare file count and total
+   size at both ends.
+
+Other items that need a live terminal, not part of the extraction:
 
 - **Hold a position across a Wednesday night and read the swap off the deal record.**
-  Settles two things at once: whether the triple-swap day really is Wednesday
-  (`symbol_info().swap_rollover3days` was never captured), and whether "Wednesday"
+  Step 2 settles which weekday is triple; only a real charge settles whether "Wednesday"
   means the rollover from Wednesday into Thursday — the day-ending convention the
   engine uses, currently recorded as unverified. Getting the labelling wrong moves
   every triple charge by a day.
-- **Read `symbol_info().chart_mode`** for each instrument, to settle whether bars are
-  bid-built or last-built. `check_margin_mode.py` is the model for the script; see the
-  `price_basis` gap below.
 - **Place one order and check whether the `comment` field survives** (§10 item 2).
 
 ## Next
 
+- **Bid-basis check: read `symbol_info().chart_mode` per symbol** (0 = bid, 1 = last)
+  with `check_chart_mode.py`, step 2 of the trial-session plan below. Until it is read,
+  `price_basis: bid` in `config/cost_ftmo_demo.yaml` is an assumption, and no FTMO
+  backtest's cost figures can be believed — see the `price_basis` gap.
 - **Phase 3c: slippage, the statistical spread model of Appendix C.1, and a real
   sizer.** 3a (spread, commission) and 3b (financing) are complete — see above.
   Slippage is already wired at zero; 3c gives it a real model. Same standard as 3a/3b:

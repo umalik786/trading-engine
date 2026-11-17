@@ -41,9 +41,12 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "DTZ", "PT", "RET", "SIM", "
 "verify_mt5.py" = ["N813", "PLR0915"]
 "extract_mt5_data.py" = ["N813"]
 "check_margin_mode.py" = ["N813"]
+"check_chart_mode.py" = ["N813"]
+"extract_mt5_ticks.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not requires_mt5'"
 markers = [
     "requires_mt5: marks tests that require a live MetaTrader5 terminal connection (skipped by default)",
 ]

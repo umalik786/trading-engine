@@ -41,7 +41,9 @@ These are design principles from the spec, restated here because they are the on
 
 ## Current state
 
-**Phase: 3 — in progress. 3a (spread, commission) complete 2026-10-01; 3b (overnight financing) complete 2026-10-02. Next is 3c: slippage, the statistical spread model of Appendix C.1, and a real sizer. Then position conventions (netting and hedging), then orchestrator design, before phase 4.**
+**Phase: 3 — in progress. 3a (spread, commission) complete 2026-10-01; 3b (overnight financing) complete 2026-10-02. Next: proposal (c), the FTMO swap-config update written up in `docs/state.md`; then 3c (slippage, the statistical spread model of Appendix C.1, a real sizer); then position conventions (netting and hedging); then orchestrator design, before phase 4.**
+
+Last session 2026-11-17: laptop replaced and market data re-extracted, including M1 (new) and a tick sample. FTMO index history before 2021-09-15 (M1/M15) and 2021-01-22 (H1/H4) is not genuinely its timeframe; `bars_genuine_from` in `config/instruments.yaml` guards it. See `docs/state.md`.
 
 Phase 2 exit criterion met (2026-09-30): `AlwaysLong` matched operator-computed buy-and-hold to the cent on two real XAUUSD M15 weeks, 5718.00 and 4740.00, both figures computed independently before the engine was run.
 
@@ -87,6 +89,8 @@ See `docs/state.md` for anything more recent than this line.
 | Venue | Proprietary firm evaluation on MT5. Both FundedNext and FTMO profiles built; firm choice deferred to phase 7. FundedNext bars automation at $50k and above |
 
 `data\` and `runtime\` sit outside the repository so that `git clean -xdf` cannot destroy historical data or persisted risk state.
+
+**Market data lives outside the repo, so GitHub holds no copy of it. Back it up to Google Drive, in a new dated folder (`G:\My Drive\trading-data-backup\<date>`), after every extraction, and compare file count and total size at both ends.** Learned 2026-11-17, when a laptop replacement lost it.
 
 `MetaTrader5` is an optional dependency with a `sys_platform == 'win32'` marker so that CI on Linux is unaffected. Tests touching it are marked `requires_mt5` and skipped by default.
 

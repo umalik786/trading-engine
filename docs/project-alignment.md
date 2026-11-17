@@ -79,10 +79,10 @@ What was changed, and why:
 
 ## 6. Open items
 
-1. Historical data depth from the chosen MT5 broker, per instrument.
+1. ~~Historical data depth from the chosen MT5 broker, per instrument.~~ **Answered 2026-11-17** on the FTMO server. Genuine M15 and M1 history starts: EURUSD 2005-01-02, XAUUSD 2005-01-02, XAGUSD 2008-11-07, NAS100 and US500 2021-09-15. The index files reach back to 2017-12-28, but everything before 2021-09-15 is daily or hourly bars filed under M15/M1 (H1/H4 genuine from 2021-01-22). See `docs/state.md`, trial session 2026-11-17.
 2. Whether the broker preserves the order `comment` field.
-3. Bar interval — not yet chosen.
-4. Symbol specifications and naming from `symbol_info()`.
+3. ~~Bar interval — not yet chosen.~~ **Answered 2026-11-17:** M15. M1 is extracted and stored but not used.
+4. ~~Symbol specifications and naming from `symbol_info()`.~~ **Answered 2026-11-17:** read from `symbol_info()` on FTMO-Demo (`verify_mt5.py`, `check_chart_mode.py`); recorded in `docs/state.md`, trial session 2026-11-17.
 5. If OANDA is pursued later: entity confirmation (UAE routes to OANDA Global Markets, BVI) and whether v20 is exposed on live accounts of that entity.
 6. ~~Whether FundedNext offers MT5 and permits a Python process driving the terminal.~~ **Answered 2026-09-10.** Both firms offer MT5. Both treat a Python script as automated trading. But FundedNext permits it only on accounts **below $50,000**, requires a non-refundable add-on fee, and prohibits EAs incorporating third-party messaging applications. FTMO permits automation at every size to $200,000 at no extra cost. This reopened the venue choice rather than closing it — see spec §10, "On the venue choice".
 7. Reset time and timezone of the accounting day, and what the daily limit anchors to, for both firms. FundedNext confirmed by support that both open and closed positions count toward both limits — the limits are therefore measured on equity. The anchor and reset boundary remain unconfirmed.

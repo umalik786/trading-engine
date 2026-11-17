@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.9 — `CostModel.financing` takes an explicit half-open time window instead of a `Bar` (§2.8). A bar cannot express whether a rollover happened, because that depends on where time was before it
+**Version:** 3.10 — records verification results from 2026-11-17: §10 items 1, 3 and 4 answered; A.6 notes FTMO's non-genuine index history, `bars_genuine_from`, and `price_basis: bid` confirmed by `chart_mode`
+**Previous:** 3.9 — `CostModel.financing` takes an explicit half-open time window instead of a `Bar` (§2.8). A bar cannot express whether a rollover happened, because that depends on where time was before it
 **Previous:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
 **Previous:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
 **Previous:** 3.6 — corrects A.3: MT5 returns server time, not UTC. Records FTMO's verified server timezone and DST calendar in A.6
@@ -729,10 +730,10 @@ Deferring the choice costs nothing: phases 0 through 6 touch no broker. Firm rul
 
 ### Still to verify before phase 0
 
-1. **Historical data depth available from the chosen MT5 broker** for each instrument, at the chosen bar interval. MT5 serves history from the broker's own server and depth varies widely. This determines whether meaningful walk-forward validation is possible at all.
+1. **~~Historical data depth available from the chosen MT5 broker~~ — ANSWERED 2026-11-17** for FTMO; see `docs/state.md`, trial session 2026-11-17. Genuine M15/M1 history: EURUSD and XAUUSD from 2005, XAGUSD from 2008-11, NAS100 and US500 from 2021-09-15 only (see A.6). Original item: for each instrument, at the chosen bar interval. MT5 serves history from the broker's own server and depth varies widely. This determines whether meaningful walk-forward validation is possible at all.
 2. **Whether the broker preserves the order `comment` field.** Some overwrite it. Determines whether §5.2 idempotency can key on it or must rely wholly on the durable-intent-log fallback.
-3. **Bar interval.** Drives feed design, warmup length, and how much intraday cost modelling matters. Not yet chosen.
-4. **Symbol specifications** from `symbol_info()`: contract size, minimum and step volume, digits, margin requirement and swap rates per instrument. These feed the sizer and cost model directly. Symbol naming is broker-specific (`XAUUSD`, `XAUUSD.m`, `GOLD`) and must live in adapter configuration.
+3. **~~Bar interval~~ — ANSWERED 2026-11-17: M15.** M1 is extracted and stored but unused. See `docs/state.md`. Drives feed design, warmup length, and how much intraday cost modelling matters.
+4. **~~Symbol specifications~~ — ANSWERED 2026-11-17**, read on FTMO-Demo; see `docs/state.md`, trial session 2026-11-17. Original item: from `symbol_info()`: contract size, minimum and step volume, digits, margin requirement and swap rates per instrument. These feed the sizer and cost model directly. Symbol naming is broker-specific (`XAUUSD`, `XAUUSD.m`, `GOLD`) and must live in adapter configuration.
 
 Items 1, 2 and 4 are answered from a free-trial or existing evaluation account on the chosen firm's MT5 server, not from a generic broker. Depth in particular cannot be shopped for once a firm is chosen, so verify before paying for an evaluation.
 
@@ -882,6 +883,10 @@ Symbol names vary by broker (`XAUUSD`, `XAUUSD.m`, `GOLD`). Contract size, volum
 This combination — EET-magnitude offsets on a US transition calendar — corresponds to no IANA timezone, because no geographic region observes it. It is a broker configuration choice, common among MT4/MT5 brokers, made to keep the weekly candle boundary stable relative to the New York session.
 
 It should nonetheless not be implemented as a hand-written table of transition dates. Determine whether `America/New_York` is in daylight time at the instant in question and apply +3 or +2 accordingly: the DST calendar still comes from the library, it is simply the US one rather than a European one. A hardcoded date table would need maintaining forever and would be wrong the first time legislation changed.
+
+**FTMO index history is not all genuinely its timeframe — verified 2026-11-17.** NAS100 and US500 bars before **2021-09-15** (M1, M15) and **2021-01-22** (H1, H4) are daily, then hourly, bars filed under the shorter timeframe. A feed would read a day's move as fifteen minutes without any error. The raw files are kept as the venue returned them (B.6); `bars_genuine_from` in `config/instruments.yaml` is how the engine is told where each series becomes genuine, and `ReplayFeed` refuses to read before it. `check_bar_spacing.py` finds these dates and checks every series after each extraction. See `docs/state.md`, trial session 2026-11-17.
+
+**`price_basis: bid` confirmed for FTMO, 2026-11-17.** `symbol_info().chart_mode` = 0 (bars built from bid) on all five instruments. On bid-built bars a long pays the spread on entry and a short pays it while open.
 
 **The accounting-day boundary of §6.5 is a different clock and must stay separate.** FTMO monitors the Max Daily Loss in Prague time and resets it at midnight there, on the European calendar. Collapsing the two clocks into a single offset produces correct results for most of the year and silently wrong ones during the weeks when the calendars diverge.
 

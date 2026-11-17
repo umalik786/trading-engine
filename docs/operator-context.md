@@ -39,18 +39,21 @@ The architecture, the reasoning, the trade-offs, the risk thinking. `project-ali
 
 | Thing | Status |
 |---|---|
+| Machine | Used ThinkPad X1 Yoga, Windows. Replaced the previous laptop 2026-11-17; repos recovered from GitHub |
 | OS | Windows, working machine (not a VPS) |
-| Python | 3.11 64-bit, installed |
+| Python | 3.11.9 64-bit, installed |
 | Editor | VS Code, installed |
-| MT5 | Terminal installed, account exists |
+| MT5 | Terminal installed (build 6320 on 2026-11-17); FTMO free-trial login, which expires |
 | TradingView | Account exists |
-| Git | 2.55.0, installed and configured |
-| `uv` | 0.12.12, installed. PATH entry added manually to user variables |
+| Git | 2.56.1, installed and configured |
+| `uv` | 0.13.8, installed. Whether the PATH entry was again added by hand on the new laptop is not recorded |
 | GitHub | Public repo `trading-engine` and a private repo, both pushed |
-| Prop firm accounts | FundedNext and FTMO, both held |
+| Data backup | Google Drive for desktop, used as a **copy** target, not a sync: each extraction is copied with `robocopy` into a new dated folder under `G:\My Drive\trading-data-backup\` |
+| OneDrive | Not used |
+| Prop firm accounts | FundedNext and FTMO, both held (not re-checked 2026-11-17) |
 | VPS | Not needed until phase 7 |
 
-**Week one is complete.** Project folder at `C:\trading\engine` with its own `.venv`, `uv.lock`, pytest running, `docs/` populated, `CLAUDE.md` in the root. Line endings normalised to LF via `.gitattributes`. No engine code written yet — phase 0 has not started.
+**Week one is complete.** Project folder at `C:\trading\engine` with its own `.venv`, `uv.lock`, pytest running, `docs/` populated, `CLAUDE.md` in the root. Line endings normalised to LF via `.gitattributes`. Phases 0-2 complete and phase 3 in progress as of 2026-11-17 — see `docs/state.md`.
 
 **On Python 3.11.** Keep it. `Self` is available in 3.11; only `typing.override` requires 3.12, and `typing_extensions` supplies it. The `MetaTrader5` package supports 3.11. Do not ask the operator to reinstall Python.
 

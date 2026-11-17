@@ -1,8 +1,56 @@
 # Current State
 
-**Phase:** 3b — COMPLETE (2026-10-02). Phase 3a complete 2026-10-01,
-phase 2 complete 2026-09-30.
 **Last session:** 2026-11-17
+**Phase:** 3 in progress. 3a (spread, commission) complete 2026-10-01; 3b (financing)
+complete 2026-10-02. **3c is next** (slippage, the C.1 spread model, a real sizer).
+Phase 2 complete 2026-09-30.
+
+## Session 2026-11-17 in brief
+
+No phase work. The day went on recovering the environment and the data, and on what the
+data turned out to contain. Details in the sections below.
+
+- **Laptop replaced.** Repositories recovered from GitHub; nothing committed was lost.
+  Market data in `C:\trading\data` was lost (it lives outside the repo by design).
+- **Data re-extracted** on a fresh FTMO trial, by the trial-session plan below: M15, H1
+  and H4 bars for all five instruments, **M1 added** (never extracted before), and a
+  **tick sample** for 2026-10-19 to 2026-11-14. Bid basis confirmed (`chart_mode` 0
+  on all five); triple-swap weekday read (indices Friday, the rest Wednesday).
+- **Fix (a):** the extractor no longer stores the bar still forming at extraction time.
+  2026 re-extracted.
+- **Fix (b):** FTMO index history before 2021-09-15 (M1, M15) and 2021-01-22 (H1, H4)
+  is daily, then hourly, bars filed under the wrong timeframe. Raw files untouched;
+  `bars_genuine_from` in `config/instruments.yaml` now tells ReplayFeed not to read it,
+  and `check_bar_spacing.py` checks every series month by month.
+- **Backups**, Google Drive, each compared at both ends:
+  `G:\My Drive\trading-data-backup\2026-11-17`, `…\2026-11-17b` (after fix a),
+  `…\2026-11-17c` (after M1).
+
+## Blocked
+
+Nothing blocks the next step. Waiting on the operator or on a live terminal:
+
+- **Proposal (c)**, the FTMO swap-config diff, is written up below and awaits review.
+  Until it is applied, `config/cost_ftmo_demo.yaml` still has stale swap rates, the wrong
+  triple-swap day for both indices, and `price_basis` marked UNVERIFIED even though it
+  has now been confirmed.
+- **Needs a held position on a live terminal:** whether "Wednesday" triple swap means the
+  rollover ending Wednesday or the one beginning it.
+- **Needs a live order:** whether the broker keeps the order `comment` field (§10 item 2).
+- FTMO trial logins expire, so the next extraction needs a new trial.
+
+## Next, in order
+
+1. **Proposal (c):** apply the FTMO swap-config diff (index triple day Friday, current
+   swap rates, verification date 2026-11-17), with the two unit tests that assert the
+   old values updated in the same change. `price_basis` can cite `chart_mode` at the same
+   time.
+2. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
+3. **Position conventions:** netting and hedging, before phase 4.
+4. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
+   `bars_genuine_from` required.
+
+Detail on each is under "Next" further down.
 
 ## Machine replaced, 2026-11-17
 
@@ -420,7 +468,9 @@ paste or summarise the output into this file before closing the session.
 5. **DST check** — `uv run python check_dst_boundaries.py`. Must print `All 3 passed.`
    Any FAIL: stop, do not use the data, do not back it up over a good copy.
    Then `uv run pytest`: the two future-shuffle tests, red since the data was lost,
-   should be green again. Then `uv run python check_bar_spacing.py`: must print
+   should be green again. Then `uv run --extra mt5 pytest -m requires_mt5`: the
+   MT5-marked tests, deselected from the default run, must also pass. Then
+   `uv run python check_bar_spacing.py`: must print
    `No violations.` Any VIOLATION means the venue has filed bars of another width under
    a timeframe after the config's `bars_genuine_from`: stop, as for the DST check.
 6. **Back up** — copy all of `C:\trading\data` off the machine, e.g.
@@ -711,6 +761,47 @@ for all five. The golden cost tests use their own test profile and are unaffecte
 Out of scope of (c) but due on the same evidence: `price_basis: bid` can now cite
 `chart_mode` = 0 on all five (step 2), and its "UNVERIFIED" comments can go.
 
+### M1 survey, 2026-11-17 — read only, nothing extracted
+
+- **M1 has never been fetched.** Every version of `extract_mt5_data.py` in git history,
+  from the first commit `e16a181` to `cd09da9`, listed only M15, H1 and H4. M1 appears
+  nowhere in history or docs.
+- **Depth on the FTMO server**, measured year by year through the extractor's own
+  `fetch_year` (true-UTC conversion), each month's commonest gap checked with
+  `check_bar_spacing.monthly_reports`:
+
+  | Instrument | Earliest M1 bar (UTC) | Genuine M1 from | Bars | Est. size |
+  |---|---|---|---|---|
+  | NAS100 | 2017-12-28 22:00 | ~September 2021 | 1,817,107 | 38.6 MB |
+  | US500 | 2017-12-28 22:00 | ~September 2021 | 1,794,563 | 31.1 MB |
+  | EURUSD | 2005-01-02 22:02 | first bar | 7,986,115 | 124.4 MB |
+  | XAUUSD | 2005-01-02 23:07 | first bar | 7,020,963 | 157.3 MB |
+  | XAGUSD | 2008-11-07 21:11 | first bar | 6,025,785 | 103.4 MB |
+  | **Total** | | | **24,644,533** | **~455 MB** |
+
+- **Index M1 has the same tiers as index M15:** about 258 bars a year (one a day) in
+  2018-2020, and January-August 2021 not M1 either. Genuine M1 from some point in
+  September 2021. Needs `M1` entries in `bars_genuine_from`.
+- **Early gold M1 is sparse:** 140,695 bars in 2005 and 166,260 in 2006, against about
+  350,000 a year from 2013. The bars present are 1-minute bars; many minutes simply
+  have none, presumably no trades. Backtests over those years see the sparseness.
+- **Size estimate ~455 MB (±20%)**: each instrument's 2025 bytes per bar, measured by
+  serialising that year to parquet in memory, times its total bars. About 1.5x the
+  whole of `C:\trading\data` today (313 MB); each backup grows by the same.
+- Side effect: requesting M1 makes the MT5 terminal download and cache it in its own
+  data folder, outside the repo.
+- **M1 EXTRACTED 2026-11-17** (~07:30 UTC), after adding M1 to the extractor and to
+  `TIMEFRAME_DURATIONS`, tests first. Totals: NAS100 1,817,122; US500 1,794,578; EURUSD
+  7,986,129; XAUUSD 7,020,978; XAGUSD 6,025,801. The spacing check flagged index M1
+  exactly as surveyed: daily bars to 2020-12, then 2021-01 to 2021-08 with commonest gap
+  1:00:00. First genuine 1-minute gap NAS100 2021-09-14 06:31, US500 02:41 UTC. Operator
+  approved `bars_genuine_from` M1 = 2021-09-15T00:00:00Z for both. After adding it:
+  spacing check **0 violations on all 20 series**; DST check 3/3; pytest 312 passed;
+  `-m requires_mt5` 8 passed. **Actual size added about 417 MB**, against the ~455 MB
+  estimate.
+- **Backup 2026-11-17c:** `G:\My Drive\trading-data-backup\2026-11-17c`, **473 files and
+  730,529,268 bytes at both ends**, 0 failed.
+
 Other items that need a live terminal, not part of the extraction:
 
 - **Hold a position across a Wednesday night and read the swap off the deal record.**
@@ -722,10 +813,10 @@ Other items that need a live terminal, not part of the extraction:
 
 ## Next
 
-- **Bid-basis check: read `symbol_info().chart_mode` per symbol** (0 = bid, 1 = last)
-  with `check_chart_mode.py`, step 2 of the trial-session plan below. Until it is read,
-  `price_basis: bid` in `config/cost_ftmo_demo.yaml` is an assumption, and no FTMO
-  backtest's cost figures can be believed — see the `price_basis` gap.
+- ~~**Bid-basis check: read `symbol_info().chart_mode` per symbol.**~~ **Done
+  2026-11-17:** `chart_mode` = 0 (bid) on all five (trial-session step 2). The config
+  still says UNVERIFIED until proposal (c) is applied.
+- **Proposal (c): FTMO swap config.** See "Proposals from the session" above for the diff.
 - **Phase 3c: slippage, the statistical spread model of Appendix C.1, and a real
   sizer.** 3a (spread, commission) and 3b (financing) are complete — see above.
   Slippage is already wired at zero; 3c gives it a real model. Same standard as 3a/3b:
@@ -756,6 +847,15 @@ Other items that need a live terminal, not part of the extraction:
 
 ## Carried-forward gaps (not blocking)
 
+- **Known limitation of `check_bar_spacing.py`: a wrong-width stretch inside a month
+  passes when correct-width bars outnumber it.** It judges each month by its
+  commonest gap, so a minority tier is invisible. Seen on real data: index M1
+  2021-09 reads "ok" with no `bars_genuine_from` at all, because its 1-minute bars
+  (from 14 Sep) outnumber the hourly ones before them (98.7% of gaps are 1 minute for
+  NAS100). The boundary had to be found directly. A tier shorter than about half a
+  month, anywhere in the history, could pass the same way. Possible fixes later: a
+  per-day check, or flagging any long run of consecutive gaps at a single wrong width.
+
 - **Known data holes, XAUUSD and XAGUSD M15: 2010-12, 2011-01, 2012-03.** The bars
   present are genuinely 15-minute (commonest gap 15 min), but only 70-83% of the gaps
   in those months are 15 minutes, against 95%+ elsewhere. 2012-03 holds about half a
@@ -764,7 +864,10 @@ Other items that need a live terminal, not part of the extraction:
   invented. A backtest spanning these months sees fewer bars, and any feature that
   assumes even spacing must handle the jumps, as B.6 already requires.
 
-- **The FTMO cost profile's `price_basis` must be verified before any FTMO backtest is
+- **Answered 2026-11-17: `chart_mode` = 0 (bid) on all five symbols** (trial-session
+  step 2). The config file will be updated with proposal (c), not yet applied.
+  Original entry kept below.
+  **The FTMO cost profile's `price_basis` must be verified before any FTMO backtest is
   believed.** MT5 records which price a symbol's bars are built from as
   `symbol_info().chart_mode` (0 = bid, 1 = last), and the 2026-09-11 verification run
   did not capture it. `config/cost_ftmo_demo.yaml` says `bid`, which is an assumption,

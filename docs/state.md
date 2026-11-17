@@ -425,6 +425,241 @@ paste or summarise the output into this file before closing the session.
    `robocopy C:\trading\data <backup location> /E`, then compare file count and total
    size at both ends.
 
+### Session readings, 2026-11-17 — FTMO-Demo, login 1515313288, terminal build 6320
+
+- **Step 0 (operator):** BLS Employment Situation released Fri 6 Nov 2026, 8:30 ET
+  (13:30 UTC) — inside the default tick window.
+- **Step 1, `verify_mt5.py`, ~06:30 UTC.** Report saved to
+  `C:\trading\data\mt5-verification-2026-11-17.json`. Symbols resolve as before
+  (US100.cash, US500.cash, EURUSD, XAUUSD, XAGUSD); contract sizes 1, 1, 100000, 100,
+  5000; digits 2, 2, 5, 2, 3. History depth (earliest bar, dates in server time):
+
+  | Instrument | Earliest | M15 bars | D1 bars |
+  |---|---|---|---|
+  | NAS100 | 2017-12-29 | 126,789 | 2,297 |
+  | US500 | 2017-12-29 | 126,798 | 2,297 |
+  | EURUSD | 2005-01-03 | 542,111 | 5,680 |
+  | XAUUSD | 2005-01-03 | 506,659 | 5,633 |
+  | XAGUSD | 2008-11-07 | 421,850 | 4,654 |
+
+  Swap long/short (points): NAS100 -684.39 / 20.6, US500 -175.75 / -4.04, EURUSD
+  -8.8 / 0.38, XAUUSD -57.69 / -4.2, XAGUSD -12.58 / -0.93.
+
+  **Unexpected, session stopped here pending operator review:**
+  1. "Spread now" was **0 points on all five**, on a Tuesday with markets open — the
+     current tick's ask equalled its bid on every symbol. **Resolved by operator:**
+     Market Watch showed live non-zero spreads; treated as a stale first quote after
+     `symbol_select`. Operator observation, ~06:30 UTC (Asian session): EURUSD steady at
+     5 points and XAUUSD steady at 44 over a few minutes, while GBPUSD and others
+     varied. **Open question for the tick sample:** are EURUSD and XAUUSD spreads fixed
+     during the Asian session? If so, C.1's hour-of-day distribution for those hours
+     collapses to one value, and the widening it targets is elsewhere.
+  2. Single requests returned up to 1,621,016 bars (EURUSD M5). The ~100,000-bar cap
+     recorded in `extract_mt5_data.py`, and step 1's caution above, did not apply.
+     Possibly the "Max bars in chart: Unlimited" setting.
+  3. EURUSD and XAUUSD history now starts 2005-01-03, not the 2017-12-29 recorded in
+     `extract_mt5_data.py` as the earliest verified start.
+  4. XAGUSD short swap is **-0.93**; on 2026-09-11 it was +0.5, a credit. The sign has
+     flipped. Expected in kind — swaps change, hence the 30-day staleness threshold —
+     but worth noting, since it was the credit path's real-world example.
+
+- **Step 2, `check_chart_mode.py`.** `chart_mode` = **0 (bid) on all five** —
+  `price_basis: bid` in `config/cost_ftmo_demo.yaml` is now a reading, not an
+  assumption (config not edited in session; update it and its provenance after).
+  `swap_rollover3days`: **NAS100 and US500 = 5 (Friday)**; EURUSD, XAUUSD, XAGUSD = 3
+  (Wednesday). The config has `triple_weekday: Wednesday` for all five, so it is
+  **wrong for both indices**. The day-labelling question (does "Wednesday" mean the
+  rollover ending Wednesday) is still open — needs a held position.
+  The config's placeholder swap rates are also stale against step 1's readings,
+  including **NAS100 short now +20.6 against -102.6 in config** — a sign change that
+  turns a cost into a credit.
+
+- **Step 3, `extract_mt5_data.py`, ~06:35 UTC. Exit 0.** Totals (earliest bar, true UTC):
+
+  | Instrument | M15 | H1 | H4 | Earliest M15 |
+  |---|---|---|---|---|
+  | NAS100 | 126,798 | 35,185 | 9,783 | 2017-12-28 22:00 |
+  | US500 | 126,807 | 35,185 | 9,782 | 2017-12-28 22:00 |
+  | EURUSD | 542,120 | 135,678 | 34,026 | 2005-01-02 22:00 |
+  | XAUUSD | 506,668 | 129,787 | 33,578 | 2005-01-02 23:00 |
+  | XAGUSD | 421,859 | 107,888 | 27,792 | 2008-11-07 21:00 |
+
+  EURUSD, XAUUSD and XAGUSD M15 per-year counts are full (about 21,000-25,000) every year
+  from their first full year; partial first years (XAGUSD 2008: 3,260) and 2026
+  year-to-date as expected.
+  **Unexpected, session stopped here pending operator review:**
+  1. **NAS100 and US500 "M15" for 2018-2020 hold about 258 bars a year: one per day,
+     stamped 22:00 UTC, with open and close spanning the whole day** (NAS100
+     2019-01-01: open 6334.86, close 6245.86). These are daily bars filed under M15. In
+     the NAS100 2021 file, 15-minute spacing first appears at **2021-09-14 06:30 UTC**.
+     ReplayFeed gives every bar ts_close = ts_open + 15 minutes, so a backtest over
+     these years would read a day's move as a 15-minute bar. **Real intraday index
+     history starts September 2021, not December 2017.** Step 1's "8.88 years" for
+     the indices overstates it the same way. H1/H4 index files not yet inspected.
+  2. **The last stored bar of each 2026 file was still forming.** Extraction ran at
+     ~06:35 UTC; the latest M15 bar opens 06:30 and H1/H4 open 06:00, so their
+     high/low/close are partial. The extractor stores whatever MT5 returns, including
+     the open bar. Affects only the newest bar, but it is a price that never finished.
+
+- **Step 4, `extract_mt5_ticks.py`, default window 2026-10-19 to 2026-11-14. Exit 0.**
+  Totals: NAS100 10,074,538; US500 2,819,491; EURUSD 1,938,422; XAUUSD 5,201,108;
+  XAGUSD 4,965,341 ticks. Every weekday non-zero, every Saturday zero, Sundays small
+  (Sunday-evening open). Read-only checks on the stored ticks:
+  - EURUSD's first Sunday tick is **21:05 UTC on 25 Oct and 22:05 UTC on 1 and 8 Nov** —
+    the US clock change on 1 Nov, seen in the ticks themselves, so the tick
+    timestamps follow the US calendar.
+  - On 6 Nov (payrolls day), no tick on any instrument has ask below bid.
+  - **37,322 of 123,126 EURUSD ticks on 6 Nov (30%) have ask = bid**, a zero spread.
+    None on the other four. Bears on C.1 and on the config's rule that every stored
+    zero spread is missing data: for EURUSD ticks, zero may be a real quote. Not
+    investigated further in session.
+
+- **Step 5, `check_dst_boundaries.py`. All 3 passed, exit 0:** Fri 17 Jan 2025 last bar
+  closes 22:00 UTC; Fri 14 Mar 2025 21:00 UTC; Fri 31 Oct 2025 21:00 UTC.
+  `uv run pytest`: **294 passed, 4 deselected, 0 failed** — the two future-shuffle
+  tests are green again. 11 warnings, unchanged from before the session.
+- **Step 6, backup, 2026-11-17 ~10:52 local.** `robocopy C:\trading\data
+  "G:\My Drive\trading-data-backup\2026-11-17" /E` — 385 files, 27 directories,
+  0 failed (robocopy exit 1 = files copied). Both ends compared independently:
+  **385 files and 313,532,723 bytes at each.** Location: Google Drive,
+  `G:\My Drive\trading-data-backup\2026-11-17`.
+
+### Proposals from the session — options for review, NOT implemented
+
+**(a) Extractor stores a bar that is still forming.**
+
+- *Fix:* `extract_mt5_data.py` captures one `extraction_cutoff = datetime.now(UTC)`
+  at the start of the run and drops any bar whose close time (open + the timeframe's
+  width) is after it. A bar closing exactly at the cutoff is kept. The cutoff is written
+  to each manifest as `complete_through_utc`, so a reader knows where the data is
+  guaranteed final. The widths would come from ReplayFeed's existing
+  `TIMEFRAME_DURATIONS` by import, not a second table.
+- *Re-extract only 2026:* delete the fifteen `2026.parquet` files and rerun without
+  `--force`. The extractor already re-fetches any year whose file is missing and skips
+  the rest, so no new flag is needed. Needs a live terminal; the current trial will do.
+- *Showing it catches a forming bar:* a `requires_mt5` test feeding the bar-to-table
+  step fake rates against a fixed cutoff of 06:35 UTC: an M15 bar opening 06:15
+  (closes 06:30) is kept, one opening 06:30 (closes 06:45) is dropped, and one opening
+  06:20 (closes exactly 06:35) is kept. Run it against today's code first: it must fail
+  on the 06:30 bar, which today's code stores. After re-extraction, a live check: for
+  every instrument and timeframe, the last stored bar's close is at or before
+  `complete_through_utc`.
+
+**(b) Index history before September 2021 is not what its folder says.**
+
+Findings from a read-only spacing scan of every file (share of consecutive bars exactly
+one bar-width apart, per year, plus a gap histogram for index M15 2021):
+
+| Series | Daily bars | Hourly bars | Genuine from (first nominal spacing, UTC) |
+|---|---|---|---|
+| NAS100 M15 | 2017-12-28 to 2021-01-21 | 2021-01-21 to 2021-09-14 | 2021-09-14 06:30 |
+| US500 M15 | 2017-12-28 to 2021-01-21 | 2021-01-21 to 2021-09-14 | 2021-09-14 02:30 |
+| NAS100 H1, H4 | 2017-12-28 to 2021-01-21 | — | 2021-01-21 (H1 22:00, H4 18:00) |
+| US500 H1, H4 | 2017-12-28 to 2021-01-21 | — | 2021-01-21 (H1 19:00, H4 18:00) |
+
+So the index M15 files hold **three tiers**: daily bars, then about eight months of
+hourly bars, then genuine 15-minute bars, all filed as M15. A check asking only "when
+does 15-minute spacing first appear" would have missed the hourly tier. **EURUSD,
+XAUUSD and XAGUSD are clean on all three timeframes back to their first year**: nominal
+spacing share 94.8% (XAUUSD M15 2005) to 99.8% (EURUSD M15), against 0% for the index
+daily years. The config's own note that index spreads are zero from 2017 to 2020 is
+the same history seen from another side.
+
+- *Raw files stay untouched*, per B.6: they are what the venue returned.
+- *Config:* a per-instrument, per-timeframe `bars_genuine_from` in
+  `config/instruments.yaml`, which already holds each instrument's verified contract
+  size. Proposed values, rounded forward to the next UTC midnight so a partial day
+  never counts: NAS100 and US500 M15 `2021-09-15T00:00Z`, H1 and H4
+  `2021-01-22T00:00Z`. Others absent, meaning no restriction. Each value carries a
+  verified date and source, like contract sizes.
+- *Engine:* ReplayFeed takes `bars_genuine_from` with the instrument's other config
+  and **raises** if `range_start`, or `warmup()`'s backward reach, falls before it. It
+  does not quietly clip, for the same reason `warmup()` raises instead of returning a
+  short list: a backtest that silently starts later than asked looks like a result.
+- *Check script:* `check_bar_spacing.py`, read only, run after every extraction as a
+  new step in the trial-session plan. For every instrument, timeframe and **month**, it
+  reports the commonest gap and the share of nominal gaps. Month, not year, because
+  index M15 2021 scores 64% for the year and only a monthly view separates the hourly
+  tier from the genuine one. It exits non-zero if any month at or after an
+  instrument's `bars_genuine_from` (or the whole file, where there is none) has a
+  commonest gap other than the nominal width. Shown failing first by running it with
+  `bars_genuine_from` removed for NAS100, which must flag 2018-2021.
+- *Effect on depth:* genuine intraday index history is about 5.2 years at M15 and 5.8
+  at H1, not the 8.88 `verify_mt5.py` reports.
+
+**(c) FTMO cost config: triple-swap day and swap rates.** Readings from steps 1 and 2.
+Proposed diff to `config/cost_ftmo_demo.yaml`, not applied:
+
+```diff
+     provenance:
+-      verified: "2026-09-11"
+-      source: "C:\\trading\\data\\mt5-verification-2026-09-11.json"
++      verified: "2026-11-17"
++      source: "C:\\trading\\data\\mt5-verification-2026-11-17.json"
+       stale_after_days: 30
+     #
+-    # triple_weekday is NOT verified. symbol_info().swap_rollover3days was
+-    # never captured, so Wednesday below is the common convention rather
+-    # than a reading from this account. Confirm by holding a position over
+-    # a Wednesday night on the trial and reading the swap off the deal
+-    # record. Note also that "Wednesday" means the rollover from Wednesday
+-    # into Thursday -- see docs/state.md on the labelling convention.
++    # triple_weekday read from symbol_info().swap_rollover3days on
++    # 2026-11-17 (check_chart_mode.py): Friday for the indices, Wednesday
++    # for the rest. Which ROLLOVER that names -- the one ending that day or
++    # the one beginning it -- is still unverified; confirm by holding a
++    # position across the night and reading the swap off the deal record.
+     instruments:
+       NAS100:
+         shape: points
+-        long_rate: "-514.2"
+-        short_rate: "-102.6"
+-        triple_weekday: Wednesday   # UNVERIFIED
++        long_rate: "-684.39"
++        short_rate: "20.6"          # positive: a credit to a short
++        triple_weekday: Friday
+       US500:
+         shape: points
+-        long_rate: "-130.92"
+-        short_rate: "-29.24"
+-        triple_weekday: Wednesday   # UNVERIFIED
++        long_rate: "-175.75"
++        short_rate: "-4.04"
++        triple_weekday: Friday
+       EURUSD:
+         shape: points
+-        long_rate: "-9.47"
+-        short_rate: "0.35"          # positive: a credit to a short
+-        triple_weekday: Wednesday   # UNVERIFIED
++        long_rate: "-8.8"
++        short_rate: "0.38"          # positive: a credit to a short
++        triple_weekday: Wednesday
+       XAUUSD:
+         shape: points
+-        long_rate: "-83.0"
+-        short_rate: "-8.3"
+-        triple_weekday: Wednesday   # UNVERIFIED
++        long_rate: "-57.69"
++        short_rate: "-4.2"
++        triple_weekday: Wednesday
+       XAGUSD:
+         shape: points
+-        long_rate: "-15.2"
+-        short_rate: "0.5"           # positive: a credit to a short
+-        triple_weekday: Wednesday   # UNVERIFIED
++        long_rate: "-12.58"
++        short_rate: "-0.93"
++        triple_weekday: Wednesday
+```
+
+Two sign changes: NAS100 short becomes a credit, XAGUSD short becomes a cost.
+**Applying this turns two unit tests red, by design**, and they would need updating
+with it: `test_the_ftmo_financing_section_is_verified_unlike_the_rest` asserts the date
+2026-09-11, and `test_the_ftmo_triple_weekday_is_set_but_unverified` asserts Wednesday
+for all five. The golden cost tests use their own test profile and are unaffected.
+Out of scope of (c) but due on the same evidence: `price_basis: bid` can now cite
+`chart_mode` = 0 on all five (step 2), and its "UNVERIFIED" comments can go.
+
 Other items that need a live terminal, not part of the extraction:
 
 - **Hold a position across a Wednesday night and read the swap off the deal record.**
@@ -446,6 +681,11 @@ Other items that need a live terminal, not part of the extraction:
   operator-computed figures before the engine runs, for both `AlwaysLong` and
   `AlwaysShort`, on a fixture checked for whether it can tell the correct behaviour from
   the bug it exists to catch, and deliberate breaks with predicted moves.
+  **Input for the C.1 spread model: EURUSD shows genuine zero-spread ticks on this
+  venue** — 30% of ticks on 2026-11-06 had ask = bid (trial-session step 4). The
+  config's rule that every stored zero spread is missing data therefore does not hold
+  for EURUSD here. It may still hold for the index bars of 2017-2020, where the zeros
+  coincide with the daily-bar history of proposal (b).
 - **Then position conventions — netting and hedging — as a step after phase 3 and before
   phase 4**, per the position-mode decision above, including the persistence question:
   what the engine must record itself when the broker is authoritative for positions.

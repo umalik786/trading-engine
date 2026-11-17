@@ -60,9 +60,31 @@ class ReplayFeed:
         point: Decimal,
         data_root: Path = DEFAULT_DATA_ROOT,
         stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
+        bars_genuine_from: datetime | None = None,
     ) -> None:
+        """`bars_genuine_from`: the instant from which this series' stored
+        bars really have the timeframe's width (config/instruments.yaml).
+        A venue can file bars of another width under a timeframe -- FTMO's
+        index "M15" before September 2021 is daily then hourly bars -- and
+        this feed would give each one ts_close = ts_open + 15 minutes,
+        reading a day's move as a quarter hour without any error. Reading
+        before it raises rather than clipping: a backtest that silently
+        starts later than asked looks like a result.
+
+        Optional, with None meaning no restriction, unlike `point`. The
+        caller that builds a feed from instrument config must pass it.
+        """
         require_utc("range_start", range_start)
         require_utc("range_end", range_end)
+        if bars_genuine_from is not None:
+            require_utc("bars_genuine_from", bars_genuine_from)
+            if range_start < bars_genuine_from:
+                raise ValueError(
+                    f"range_start ({range_start.isoformat()}) is before bars_genuine_from "
+                    f"({bars_genuine_from.isoformat()}) for {instrument} {timeframe}: "
+                    "bars stored before that date are not genuinely "
+                    f"{timeframe} -- see config/instruments.yaml"
+                )
         if range_end <= range_start:
             raise ValueError(
                 f"range_end ({range_end!r}) must be after range_start ({range_start!r})"
@@ -82,6 +104,7 @@ class ReplayFeed:
         self.range_end = range_end
         self._point = point
         self._bar_duration = TIMEFRAME_DURATIONS[timeframe]
+        self._genuine_from = bars_genuine_from
         self._dir = data_root / instrument / timeframe
         self._check_server_timezone_provenance(stale_after_days)
 
@@ -203,18 +226,27 @@ class ReplayFeed:
 
         collected: list[Bar] = []
         year = self.range_start.year
-        while len(collected) < n and year >= _EARLIEST_POSSIBLE_YEAR:
+        floor = self._genuine_from
+        earliest_year = floor.year if floor is not None else _EARLIEST_POSSIBLE_YEAR
+        while len(collected) < n and year >= earliest_year:
             path = self._year_file(year)
             if path.exists():
                 table = pq.read_table(path)
                 year_bars = [
                     self._row_to_bar(row)
                     for row in table.to_pylist()
-                    if row["time"] < self.range_start
+                    if row["time"] < self.range_start and (floor is None or row["time"] >= floor)
                 ]
                 collected = year_bars + collected
             year -= 1
 
+        if len(collected) < n and floor is not None:
+            raise ValueError(
+                f"requested {n} warmup bars for {self.instrument} {self.timeframe} "
+                f"before {self.range_start.isoformat()}, but only {len(collected)} exist "
+                f"at or after bars_genuine_from ({floor.isoformat()}); earlier bars are "
+                f"not genuinely {self.timeframe} -- see config/instruments.yaml"
+            )
         if len(collected) < n:
             raise ValueError(
                 f"requested {n} warmup bars for {self.instrument} {self.timeframe} "

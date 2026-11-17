@@ -4,13 +4,18 @@ docs/trading-engine-architecture.md Appendix A.6.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from engine.core.instruments import load_contract_sizes, load_instrument_specs
+from engine.core.instruments import (
+    load_bars_genuine_from,
+    load_contract_sizes,
+    load_instrument_specs,
+)
 
 INSTRUMENTS_CONFIG = Path(__file__).resolve().parents[2] / "config" / "instruments.yaml"
 
@@ -45,6 +50,46 @@ class TestShippedConfig:
         specs = load_instrument_specs(INSTRUMENTS_CONFIG)
         sizes = load_contract_sizes(INSTRUMENTS_CONFIG)
         assert {symbol: spec.contract_size for symbol, spec in specs.items()} == sizes
+
+
+class TestBarsGenuineFrom:
+    """Index history on this venue is daily, then hourly, bars filed under
+    M15 until September 2021, and daily bars filed under H1/H4 until
+    January 2021 (docs/state.md, trial session 2026-11-17, proposal b).
+    The dates past which each series is genuinely what its folder says are
+    venue facts, so they live in config."""
+
+    def test_the_index_series_carry_their_genuine_from_dates(self) -> None:
+        genuine = load_bars_genuine_from(INSTRUMENTS_CONFIG)
+        for symbol in ("NAS100", "US500"):
+            assert genuine[symbol] == {
+                "M15": datetime(2021, 9, 15, tzinfo=UTC),
+                "H1": datetime(2021, 1, 22, tzinfo=UTC),
+                "H4": datetime(2021, 1, 22, tzinfo=UTC),
+            }
+
+    def test_the_clean_instruments_carry_no_restriction(self) -> None:
+        genuine = load_bars_genuine_from(INSTRUMENTS_CONFIG)
+        for symbol in ("EURUSD", "XAUUSD", "XAGUSD"):
+            assert genuine[symbol] == {}
+
+    def test_a_date_without_a_timezone_is_rejected(self, tmp_path: Path) -> None:
+        config = tmp_path / "instruments.yaml"
+        config.write_text(
+            'instruments:\n  NAS100:\n    contract_size: 1\n    point: "0.01"\n'
+            '    bars_genuine_from:\n      M15: "2021-09-15T00:00:00"\n'
+        )
+        with pytest.raises(ValidationError, match="UTC"):
+            load_instrument_specs(config)
+
+    def test_a_non_utc_date_is_rejected(self, tmp_path: Path) -> None:
+        config = tmp_path / "instruments.yaml"
+        config.write_text(
+            'instruments:\n  NAS100:\n    contract_size: 1\n    point: "0.01"\n'
+            '    bars_genuine_from:\n      M15: "2021-09-15T00:00:00+02:00"\n'
+        )
+        with pytest.raises(ValidationError, match="UTC"):
+            load_instrument_specs(config)
 
 
 class TestValidation:

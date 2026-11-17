@@ -17,11 +17,12 @@ easier ways to load the wrong file and not notice.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class InstrumentSpec(BaseModel):
@@ -36,6 +37,23 @@ class InstrumentSpec(BaseModel):
     # profile's account currency, which raises on a mismatch rather than
     # converting at an FX rate nobody has verified.
     quote_currency: str = "USD"
+    # Per timeframe, the UTC instant from which stored bars genuinely have
+    # that timeframe's width. Before it, a venue may have filed bars of
+    # another width under the same timeframe -- on FTMO, index "M15" before
+    # September 2021 is daily then hourly bars. A timeframe absent here has
+    # no restriction. See check_bar_spacing.py, which is how these are found.
+    bars_genuine_from: dict[str, datetime] = Field(default_factory=dict)
+
+    @field_validator("bars_genuine_from")
+    @classmethod
+    def _must_be_utc(cls, value: dict[str, datetime]) -> dict[str, datetime]:
+        for timeframe, instant in value.items():
+            if instant.tzinfo is None or instant.utcoffset() != timedelta(0):
+                raise ValueError(
+                    f"bars_genuine_from[{timeframe}] must be a UTC datetime "
+                    f"(end it in Z), got {instant!r}"
+                )
+        return value
 
 
 def load_instrument_specs(path: Path) -> dict[str, InstrumentSpec]:
@@ -56,3 +74,10 @@ def load_point_sizes(path: Path) -> dict[str, Decimal]:
     """The {symbol: point} mapping a feed needs to convert MT5's spread
     from points into price units."""
     return {symbol: spec.point for symbol, spec in load_instrument_specs(path).items()}
+
+
+def load_bars_genuine_from(path: Path) -> dict[str, dict[str, datetime]]:
+    """The {symbol: {timeframe: instant}} mapping a feed is constructed
+    with, so it refuses to read bars from before a series is genuine."""
+    specs = load_instrument_specs(path)
+    return {symbol: dict(spec.bars_genuine_from) for symbol, spec in specs.items()}

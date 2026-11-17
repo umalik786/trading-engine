@@ -420,7 +420,9 @@ paste or summarise the output into this file before closing the session.
 5. **DST check** — `uv run python check_dst_boundaries.py`. Must print `All 3 passed.`
    Any FAIL: stop, do not use the data, do not back it up over a good copy.
    Then `uv run pytest`: the two future-shuffle tests, red since the data was lost,
-   should be green again.
+   should be green again. Then `uv run python check_bar_spacing.py`: must print
+   `No violations.` Any VIOLATION means the venue has filed bars of another width under
+   a timeframe after the config's `bars_genuine_from`: stop, as for the DST check.
 6. **Back up** — copy all of `C:\trading\data` off the machine, e.g.
    `robocopy C:\trading\data <backup location> /E`, then compare file count and total
    size at both ends.
@@ -603,6 +605,38 @@ the same history seen from another side.
   `bars_genuine_from` removed for NAS100, which must flag 2018-2021.
 - *Effect on depth:* genuine intraday index history is about 5.2 years at M15 and 5.8
   at H1, not the 8.88 `verify_mt5.py` reports.
+- **IMPLEMENTED 2026-11-17.** Raw files untouched: 385 files, 313,533,297 bytes, newest
+  write still the 06:54 re-extraction.
+  - `config/instruments.yaml`: `bars_genuine_from` for NAS100 and US500 (M15
+    2021-09-15, H1/H4 2021-01-22, UTC), with provenance. `InstrumentSpec` rejects a
+    date that is not UTC; `load_bars_genuine_from()` returns the mapping.
+  - `ReplayFeed(..., bars_genuine_from=...)` raises if `range_start` is before it, and
+    `warmup()` raises rather than reach back past it. **Optional, default None (no
+    restriction), unlike `point`.** Making it required would break the operator-written
+    `tests/properties/test_future_shuffle.py`, which constructs a ReplayFeed and is not
+    Claude Code's to edit. The guard therefore holds only where the caller passes the
+    date. The real orchestrator, when it builds feeds from config, must pass it.
+    Consider making it required then, with the operator updating that test.
+  - `check_bar_spacing.py`: commonest gap per instrument, timeframe and **month**,
+    judged on the bars the engine may read. Exit 1 on any VIOLATION. Added to step 5
+    of the trial-session plan.
+  - *Tests first.* The config test failed for the right reason before the config was
+    edited (shipped config returned `{}` for the indices). The ReplayFeed and
+    spacing-check tests could only fail at the interface against the old code
+    (unexpected keyword; no such module), so four deliberate breaks were run after
+    implementing, each restored and SHA-256 verified: constructor guard disabled (1 red),
+    warmup floor removed (1 red), spacing judged per **year** (6 red, including the
+    command passing three-tier data), spacing judged ignoring `bars_genuine_from`
+    (3 red). pytest: 310 passed, 6 deselected.
+  - *On real data:* shipped config → exit 0, no violations; 238 months excluded.
+    NAS100 and US500 M15 January-August 2021 show commonest gap **1:00:00**, 0% at
+    15 minutes. September 2021 is "mixed" (commonest gap 15 min, 84% share), because
+    it straddles the date; its allowed part is clean. With NAS100's dates removed from
+    a config copy → exit 1, 119 violations: M15 December 2017 to August 2021 (45),
+    H1 and H4 December 2017 to January 2021 (37 each).
+  - *Unrelated finding:* six metal months are genuinely 15-minute but only 70-83% of
+    their gaps are 15 minutes — recorded as known data holes, see "Carried-forward
+    gaps".
 
 **(c) FTMO cost config: triple-swap day and swap rates.** Readings from steps 1 and 2.
 Proposed diff to `config/cost_ftmo_demo.yaml`, not applied:
@@ -714,8 +748,21 @@ Other items that need a live terminal, not part of the extraction:
 - **Then design the real orchestrator (`core/engine.py`), before phase 4.** The risk
   gate lives inside the bar loop, so phase 4 cannot start until that loop exists. See
   the orchestrator entry under "Carried-forward gaps".
+  - **Make `ReplayFeed`'s `bars_genuine_from` required** (today optional, default no
+    restriction), and have the orchestrator pass it from `config/instruments.yaml`
+    when it builds a feed. **Update `tests/properties/test_future_shuffle.py` at the
+    same time — operator edit**: it constructs a ReplayFeed, and a required argument
+    breaks it. Until then the guard holds only for callers that pass the date.
 
 ## Carried-forward gaps (not blocking)
+
+- **Known data holes, XAUUSD and XAGUSD M15: 2010-12, 2011-01, 2012-03.** The bars
+  present are genuinely 15-minute (commonest gap 15 min), but only 70-83% of the gaps
+  in those months are 15 minutes, against 95%+ elsewhere. 2012-03 holds about half a
+  normal month's bars (XAUUSD 974, XAGUSD 1,021). Found by `check_bar_spacing.py` on
+  2026-11-17. **Not gap-filled, per B.6**: a missing bar is left missing, never
+  invented. A backtest spanning these months sees fewer bars, and any feature that
+  assumes even spacing must handle the jumps, as B.6 already requires.
 
 - **The FTMO cost profile's `price_basis` must be verified before any FTMO backtest is
   believed.** MT5 records which price a symbol's bars are built from as

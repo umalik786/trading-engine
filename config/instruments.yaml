@@ -37,15 +37,37 @@
 # All five here are USD-quoted, so no FX conversion is needed anywhere in
 # the cost model -- and a future instrument that isn't will raise rather
 # than be converted at a rate nobody verified.
+#
+# bars_genuine_from: per timeframe, the UTC instant from which stored bars
+# really are that timeframe's width. ReplayFeed refuses to read before it.
+# Absent means no restriction. VERIFIED 2026-11-17 by a month-by-month
+# spacing scan of the extracted data (check_bar_spacing.py; docs/state.md,
+# trial session 2026-11-17, proposal b). On this venue the index history is
+# daily bars filed under M15, H1 and H4 until 2021-01-21, then hourly bars
+# filed under M15 until 2021-09-14. First genuine 15-minute spacing:
+# NAS100 2021-09-14 06:30 UTC, US500 02:30. First genuine H1/H4 spacing:
+# 2021-01-21. Each date is rounded forward to the next UTC midnight so a
+# partial day never counts. The raw files are left as the venue returned
+# them (spec B.6); this is where the engine is told not to believe them.
+# EURUSD, XAUUSD and XAGUSD were clean on all three timeframes back to
+# their first year.
 instruments:
   NAS100:
     contract_size: 1
     point: "0.01"
     quote_currency: USD
+    bars_genuine_from:
+      M15: "2021-09-15T00:00:00Z"
+      H1: "2021-01-22T00:00:00Z"
+      H4: "2021-01-22T00:00:00Z"
   US500:
     contract_size: 1
     point: "0.01"
     quote_currency: USD
+    bars_genuine_from:
+      M15: "2021-09-15T00:00:00Z"
+      H1: "2021-01-22T00:00:00Z"
+      H4: "2021-01-22T00:00:00Z"
   EURUSD:
     contract_size: 100000
     point: "0.00001"

@@ -419,3 +419,71 @@ class TestServerTimezoneProvenance:
         _write_manifest(tmp_path, "EURUSD", "M15", server_timezone=None)
         with pytest.warns(UserWarning, match="verification is incomplete"):
             _construct_feed(tmp_path)
+
+
+class TestBarsGenuineFrom:
+    """A series can hold bars of another width filed under its timeframe --
+    on this venue, index "M15" before September 2021 is daily then hourly
+    bars. ReplayFeed gives every bar ts_close = ts_open + the timeframe's
+    width, so it would read a day's move as fifteen minutes and nothing
+    would error. Given the date from which a series is genuine, the feed
+    must refuse to read before it -- raise, not clip, because a backtest
+    that quietly starts later than asked looks like a result."""
+
+    GENUINE_FROM = datetime(2024, 1, 2, 3, 0, tzinfo=UTC)
+
+    def _feed(self, root: Path, range_start: datetime) -> ReplayFeed:
+        return ReplayFeed(
+            instrument="EURUSD",
+            timeframe="M15",
+            range_start=range_start,
+            range_end=datetime(2024, 1, 3, tzinfo=UTC),
+            point=_POINT,
+            data_root=root,
+            bars_genuine_from=self.GENUINE_FROM,
+        )
+
+    def _write(self, root: Path) -> None:
+        # 2024-01-02 00:00 to 05:45: twelve bars before the genuine-from
+        # instant, twelve at or after it.
+        _write_year(root, "EURUSD", "M15", 2024, _m15_series(datetime(2024, 1, 2, tzinfo=UTC), 24))
+
+    def test_a_range_starting_before_it_is_refused(self, tmp_path: Path) -> None:
+        self._write(tmp_path)
+        with pytest.raises(ValueError, match="bars_genuine_from"):
+            self._feed(tmp_path, datetime(2024, 1, 2, 2, 45, tzinfo=UTC))
+
+    def test_a_range_starting_at_it_streams_normally(self, tmp_path: Path) -> None:
+        self._write(tmp_path)
+        bars = list(self._feed(tmp_path, self.GENUINE_FROM).stream())
+        assert len(bars) == 12
+        assert bars[0].ts_open == self.GENUINE_FROM
+
+    def test_warmup_that_would_reach_before_it_is_refused(self, tmp_path: Path) -> None:
+        """Range starts 04:00: four genuine bars precede it (03:00-03:45).
+        Asking for five would need one from before the genuine-from date."""
+        self._write(tmp_path)
+        feed = self._feed(tmp_path, datetime(2024, 1, 2, 4, 0, tzinfo=UTC))
+        with pytest.raises(ValueError, match="bars_genuine_from"):
+            feed.warmup(5)
+
+    def test_warmup_entirely_after_it_is_served(self, tmp_path: Path) -> None:
+        self._write(tmp_path)
+        feed = self._feed(tmp_path, datetime(2024, 1, 2, 4, 0, tzinfo=UTC))
+        bars = feed.warmup(4)
+        assert [b.ts_open for b in bars] == [
+            self.GENUINE_FROM + timedelta(minutes=15 * i) for i in range(4)
+        ]
+
+    def test_a_naive_genuine_from_is_rejected(self, tmp_path: Path) -> None:
+        self._write(tmp_path)
+        with pytest.raises(ValueError, match="bars_genuine_from"):
+            ReplayFeed(
+                instrument="EURUSD",
+                timeframe="M15",
+                range_start=self.GENUINE_FROM,
+                range_end=datetime(2024, 1, 3, tzinfo=UTC),
+                point=_POINT,
+                data_root=tmp_path,
+                bars_genuine_from=datetime(2024, 1, 2, 3, 0),  # noqa: DTZ001 -- the point of the test
+            )

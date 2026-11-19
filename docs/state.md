@@ -39,8 +39,9 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 
 1. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
    Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"). **3c.0
-   complete 2026-11-19** (bar spread = minimum; spread-table method decided). **3c.1,
-   slippage, is next.**
+   complete 2026-11-19** (bar spread = minimum; spread-table method decided). **3c.1
+   complete 2026-11-19** (slippage; see "3c.1 slippage — COMPLETE"). **3c.2, the
+   statistical spread model, is next.**
 2. **Position conventions:** netting and hedging, before phase 4.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
@@ -950,7 +951,9 @@ tick history; not investigated.
     is extracted. That sample takes 240 MB, so the full span at today's density is about
     15 GB (perhaps 8-12 GB, since early ticks are about half as dense), carried by every
     backup. A sampled subset, such as one week per month, would be about a quarter of
-    that.
+    that. **Proposed approach (operator's leaning, 2026-11-19; to be decided when 3c.2
+    starts):** sample one week per month, the week containing the 15th, rather than the
+    full history.
   - **Known limitation**, recorded under carried-forward gaps.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
@@ -966,6 +969,53 @@ deferred to 3c.2; the spread-table method is decided.
   Market Watch, ~07:07 UTC the same day:** EURUSD mostly 1 point, range 0-3 over two
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
+
+### 3c.1 slippage — COMPLETE 2026-11-19
+
+**Built, tests first:**
+- Slippage is paid on fills only, never in the valuation of an open position.
+  `executable_price` is the quoted price adjusted for spread; `fill_price` adds slippage
+  (spec v3.11, §2.8).
+- Fills are put on the instrument's price grid, rounded against the trader: up for a
+  buy, down for a sell.
+- Each instrument's costs have a `slippage` block with shape `fixed` or
+  `spread_multiple`. `spread_multiple` scales the spread the fill is charged (the fill
+  bar's resolved spread now, the modelled spread after 3c.2).
+- Each instrument's cost block rejects unknown keys. Before that change, the new
+  `slippage` block was silently ignored and every new test showed slippage at zero, the
+  exact danger the guard now prevents.
+- FTMO profile: `spread_multiple 0.5` on all five, PLACEHOLDER (cannot be measured on a
+  simulated venue, C.4).
+- The 3a/3b test profile keeps `fixed 0`, and its figures are unchanged.
+
+The volatility term of C.1 is deferred until after the orchestrator design.
+
+**Exit criterion MET:** a new golden test, `tests/golden/test_slippage_vs_hand_figures.py`,
+with its own profile (`cost_test_profile_slippage.yaml`, identical to the 3a/3b profile
+except slippage `spread_multiple 0.3`), on the 2145 fixture. The operator's hand
+figures, computed before the engine's were seen, are **long 2571.50 and short −3069.50**.
+Both match. The fixture is guarded in code: the deciding, fill and last bars give three
+different slippage amounts, and rounding against the trader differs from rounding to
+nearest on both sides.
+
+**Breaks — every move predicted in writing before running (08:24 UTC), every one exact.**
+Move = engine minus hand figure; each restored and SHA-256 verified.
+
+| Break | Long | Short |
+|---|---|---|
+| 1. Slippage from the deciding bar (a stale-bar bug) | **−11.00** | **−11.00** |
+| 2. Slippage from the last bar (injected, not causally reachable) | **+2.00** | **+2.00** |
+| 3. Slippage in the trader's favour | **+17.00** | **+17.00** |
+| 4. Slippage back in valuation (the old code shape) | **−6.90** | **−6.90** |
+| 5. Rounding to nearest instead of against the trader | **+1.00** | **+1.00** |
+| 6. Slippage scaled by the spread component, not the bar's spread | **0.00** | **+9.00** |
+
+- **Break 6 is invisible on the long.** On a bid basis the long's spread component is
+  the whole spread, so scaling by it changes nothing. Only the short catches it. That is
+  the same one-sided blindness as 3a's breaks 1 and 3 and 3b's sign break, on a fourth
+  mechanism.
+- **Break 2 cannot arise in a causal loop**, since the last bar is in the future at fill
+  time. It was injected only to show the figure separates the three amounts.
 
 ## Next
 

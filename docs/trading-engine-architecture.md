@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.10 — records verification results from 2026-11-17: §10 items 1, 3 and 4 answered; A.6 notes FTMO's non-genuine index history, `bars_genuine_from`, and `price_basis: bid` confirmed by `chart_mode`
+**Version:** 3.11 — §2.8: `executable_price` is the quoted price adjusted for spread, used to value open positions; `fill_price` adds slippage, and puts the fill on the price grid rounded against the trader. Slippage never enters valuation, because the firm measures equity at quoted prices and phase 4's limits must use the same equity
+**Previous:** 3.10 — records verification results from 2026-11-17: §10 items 1, 3 and 4 answered; A.6 notes FTMO's non-genuine index history, `bars_genuine_from`, and `price_basis: bid` confirmed by `chart_mode`
 **Previous:** 3.9 — `CostModel.financing` takes an explicit half-open time window instead of a `Bar` (§2.8). A bar cannot express whether a rollover happened, because that depends on where time was before it
 **Previous:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
 **Previous:** 3.7 — adds `AlwaysShort` to the §7.1 reference strategies. The sell side was never covered: `AlwaysLong` alone leaves sign errors and direction-dependent cost bugs undetected
@@ -272,20 +273,29 @@ class CostModel(Protocol):
     def executable_price(
         self, side: Literal["buy", "sell"], bar: Bar, reference_price: Decimal
     ) -> Decimal:
-        """v3.8. The price a trade in `side` actually executes at, given a
-        quoted reference price on `bar`.
+        """v3.8, amended v3.11. The quoted price adjusted for spread, for a
+        trade in `side`, given a quoted reference price on `bar`. No
+        slippage.
 
-        Both a fill and a position valuation ask this same question, and if
+        Both a fill and a position valuation need the spread rule, and if
         each worked it out separately they would eventually disagree while
         both looking locally correct. So `fill_price` wraps this using
         bar.open, and valuation calls it with bar.close once per direction:
         a long is valued where it could SELL, a short where it could BUY.
         Whether the quoted price is a bid or a mid lives in the
-        implementation, nowhere else."""
+        implementation, nowhere else.
+
+        v3.11: valuation uses this as-is and never includes slippage. The
+        firm measures equity at quoted prices without slippage, and phase
+        4's loss limits must be computed on the same equity the firm uses."""
 
     def fill_price(self, order: Order, bar: Bar, book: Optional[BookSnapshot]) -> Decimal:
         """Model the realistic fill, including spread and market impact.
-        The spread comes from the FILL bar, never the deciding bar."""
+        The spread comes from the FILL bar, never the deciding bar.
+
+        v3.11: this is `executable_price` plus slippage, always against the
+        trader, and only here. The result is put on the instrument's price
+        grid, rounded against the trader -- up for a buy, down for a sell."""
 
     def fees(self, order: Order, fill_price: Decimal) -> Decimal: ...
 

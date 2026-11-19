@@ -100,32 +100,50 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "1.40"     # PLACEHOLDER -- near the observed median
-      slippage_price_units: "0"   # phase 3c owns slippage
+      slippage:                   # PLACEHOLDER -- see the note below
+        shape: spread_multiple
+        value: "0.5"
     US500:
       commission:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.39"     # PLACEHOLDER
-      slippage_price_units: "0"
+      slippage:                   # PLACEHOLDER
+        shape: spread_multiple
+        value: "0.5"
     EURUSD:
       commission:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.00007"  # PLACEHOLDER
-      slippage_price_units: "0"
+      slippage:                   # PLACEHOLDER
+        shape: spread_multiple
+        value: "0.5"
     XAUUSD:
       commission:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.16"     # PLACEHOLDER
-      slippage_price_units: "0"
+      slippage:                   # PLACEHOLDER
+        shape: spread_multiple
+        value: "0.5"
     XAGUSD:
       commission:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.019"    # PLACEHOLDER
-      slippage_price_units: "0"
+      slippage:                   # PLACEHOLDER
+        shape: spread_multiple
+        value: "0.5"
 
+  # slippage is a PLACEHOLDER everywhere above: 0.5 x the spread each fill is
+  # charged, always against the trader, on fills only (never on the valuation
+  # of an open position -- spec v3.11, §2.8). Chosen 2026-11-19 as a
+  # pessimistic guess, because zero would be the optimistic one. It CANNOT be
+  # measured here: FTMO is a simulated venue, so expected-versus-realised
+  # fill comparison measures the firm's simulator, not the market (spec C.4,
+  # §6.5.9). It stays a placeholder until a live-capital venue exists.
+  #
   # zero_spread_genuine is deliberately absent everywhere above, so every
   # zero spread in the stored history is treated as missing data and
   # resolves to the fallback. That is the pessimistic default and the

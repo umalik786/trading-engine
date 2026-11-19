@@ -34,11 +34,12 @@ def _profile(  # noqa: PLR0913 -- one keyword per profile field under test
     value: str = "0",
     fallback: str | None = "0.50",
     slippage: str = "0",
+    slippage_shape: str = "fixed",
     genuine: list[dict] | None = None,
 ) -> CostProfile:
     instrument: dict = {
         "commission": {"shape": shape, "value": value},
-        "slippage_price_units": slippage,
+        "slippage": {"shape": slippage_shape, "value": slippage},
     }
     if fallback is not None:
         instrument["fallback_spread"] = fallback
@@ -301,33 +302,103 @@ class TestZeroSpreadResolution:
         assert model.executable_price("buy", bar, Decimal("2000.00")) == Decimal("2000.50")
 
 
-class TestSlippageIsWiredNotDecorative:
-    def test_it_is_zero_on_a_profile_that_configures_zero(self) -> None:
-        model = _model(slippage="0")
+class TestSlippageOnFillsOnly:
+    """Spec v3.11 (operator decision 2026-11-19): slippage is paid on fills,
+    never on the valuation of an open position. FTMO measures equity at
+    quoted prices without slippage, and phase 4's loss limits must use the
+    same equity the firm does. Spread stays in valuation."""
 
-        assert model.executable_price("buy", _bar(), Decimal("2000.00")) == Decimal("2000.30")
+    def test_a_buy_fill_pays_slippage(self) -> None:
+        """A zero that is never exercised cannot be told apart from one that
+        was never connected."""
+        # 2000.00 open + 0.30 spread + 0.05 slippage
+        fill = _model(slippage="0.05").fill_price(_order("buy"), _bar())
+        assert fill == Decimal("2000.35")
 
-    def test_a_non_zero_slippage_moves_a_buy_up(self) -> None:
-        """The test that makes the zero meaningful: a zero that is never
-        exercised cannot be told apart from one that was never connected."""
-        model = _model(slippage="0.05")
+    def test_a_sell_fill_pays_slippage(self) -> None:
+        fill = _model(slippage="0.05").fill_price(_order("sell"), _bar())
+        assert fill == Decimal("1999.95")
 
-        # 2000.00 + 0.30 spread + 0.05 slippage
-        assert model.executable_price("buy", _bar(), Decimal("2000.00")) == Decimal("2000.35")
-
-    def test_a_non_zero_slippage_moves_a_sell_down(self) -> None:
-        model = _model(slippage="0.05")
-
-        assert model.executable_price("sell", _bar(), Decimal("2000.00")) == Decimal("1999.95")
-
-    def test_slippage_is_adverse_on_both_sides(self) -> None:
-        model = _model(slippage="0.05")
+    def test_a_long_is_valued_without_slippage(self) -> None:
         bar = _bar()
-        buy = model.executable_price("buy", bar, Decimal("2000.00"))
-        sell = model.executable_price("sell", bar, Decimal("2000.00"))
+        assert _model(slippage="0.05").executable_price("sell", bar, bar.close) == Decimal(
+            "2010.00"
+        )
 
-        assert buy > Decimal("2000.00")
-        assert sell < Decimal("2000.00")
+    def test_a_short_is_valued_with_spread_but_without_slippage(self) -> None:
+        bar = _bar()
+        assert _model(slippage="0.05").executable_price("buy", bar, bar.close) == Decimal("2010.30")
+
+
+class TestSpreadMultipleSlippage:
+    """Slippage = multiple x the spread the fill is charged: the fill bar's
+    resolved spread today, the modelled spread after 3c.2 (operator decision
+    2026-11-19). Against the trader on both sides; fills only."""
+
+    def _model(self, multiple: str = "0.5", **kwargs: object) -> ConfiguredCostModel:
+        return _model(slippage=multiple, slippage_shape="spread_multiple", **kwargs)
+
+    def test_a_buy_pays_the_multiple_of_the_fill_bars_spread(self) -> None:
+        # 2000.00 + 0.30 spread + 0.5 x 0.30 = 2000.45
+        assert self._model().fill_price(_order("buy"), _bar()) == Decimal("2000.45")
+
+    def test_a_sell_on_a_bid_basis_still_pays_slippage(self) -> None:
+        """On a bid basis a sell pays no spread, but slippage scales with the
+        bar's spread, not with the zero spread component. A model that
+        scaled it by the component would give every sell free fills."""
+        # 2000.00 - 0.5 x 0.30 = 1999.85
+        assert self._model().fill_price(_order("sell"), _bar()) == Decimal("1999.85")
+
+    def test_it_scales_with_the_fill_bars_own_spread(self) -> None:
+        # 2000.00 + 0.20 + 0.5 x 0.20 = 2000.30
+        bar = _bar(spread="0.20")
+        assert self._model().fill_price(_order("buy"), bar) == Decimal("2000.30")
+
+    def test_a_zero_spread_bar_scales_with_the_fallback_not_with_zero(self) -> None:
+        # zero is missing data -> fallback 0.50; 2000.00 + 0.50 + 0.5 x 0.50
+        bar = _bar(spread="0")
+        assert self._model().fill_price(_order("buy"), bar) == Decimal("2000.75")
+
+    def test_an_off_grid_result_rounds_against_the_trader(self) -> None:
+        # 2000.00 + 0.27 + 0.3 x 0.27 = 2000.351 -> 2000.36
+        bar = _bar(spread="0.27")
+        assert self._model("0.3").fill_price(_order("buy"), bar) == Decimal("2000.36")
+
+    def test_valuation_carries_no_spread_multiple_slippage(self) -> None:
+        bar = _bar()
+        model = self._model()
+        assert model.executable_price("sell", bar, bar.close) == Decimal("2010.00")
+        assert model.executable_price("buy", bar, bar.close) == Decimal("2010.30")
+
+
+class TestFillsRoundAgainstTheTrader:
+    """Operator decision 2026-11-19: a fill lands on the instrument's price
+    grid (its point, 0.01 here), rounded against the trader -- up for a buy,
+    down for a sell -- never to nearest."""
+
+    def test_a_buy_off_the_grid_rounds_up(self) -> None:
+        # 2000.00 + 0.30 + 0.005 = 2000.305 -> 2000.31
+        fill = _model(slippage="0.005").fill_price(_order("buy"), _bar())
+        assert fill == Decimal("2000.31")
+
+    def test_a_sell_off_the_grid_rounds_down(self) -> None:
+        # 2000.00 - 0.005 = 1999.995 -> 1999.99
+        fill = _model(slippage="0.005").fill_price(_order("sell"), _bar())
+        assert fill == Decimal("1999.99")
+
+    def test_a_buy_rounds_up_even_where_nearest_would_round_down(self) -> None:
+        # 2000.301 -> 2000.31 (nearest would give 2000.30)
+        fill = _model(slippage="0.001").fill_price(_order("buy"), _bar())
+        assert fill == Decimal("2000.31")
+
+    def test_a_sell_rounds_down_even_where_nearest_would_round_up(self) -> None:
+        # 1999.999 -> 1999.99 (nearest would give 2000.00)
+        fill = _model(slippage="0.001").fill_price(_order("sell"), _bar())
+        assert fill == Decimal("1999.99")
+
+    def test_a_fill_already_on_the_grid_is_unchanged(self) -> None:
+        fill = _model(slippage="0.05").fill_price(_order("buy"), _bar())
+        assert fill == Decimal("2000.35")
 
 
 class TestCurrencyGuard:

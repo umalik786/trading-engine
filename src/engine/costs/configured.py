@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Literal
 
 from engine.core.clock import (
@@ -59,6 +59,15 @@ from engine.costs.base import BookSnapshot
 from engine.costs.profile import CostProfile, InstrumentCosts, ServerClockConfig, SwapRates
 
 _TWO = Decimal(2)
+
+
+def _to_grid(price: Decimal, point: Decimal, rounding: str) -> Decimal:
+    """`price` as a whole number of `point`s, rounded in the given direction.
+
+    Dividing by a point such as 0.01 or 0.00001 is exact in base 10, so no
+    hidden rounding happens before the deliberate one.
+    """
+    return (price / point).to_integral_value(rounding=rounding) * point
 
 
 def build_server_clock(config: ServerClockConfig | None) -> ServerClock | None:
@@ -154,11 +163,15 @@ class ConfiguredCostModel:
         bar: Bar,
         reference_price: Decimal,
     ) -> Decimal:
-        """Where a trade in `side` actually executes. The single rule --
-        see the module docstring, and §2.8 on why it is not duplicated."""
-        costs = self._costs_for(bar.symbol)
+        """The quoted price adjusted for spread, for a trade in `side`
+        (spec v3.11, §2.8). Used as-is to value open positions; `fill_price`
+        adds slippage on top. See the module docstring, and §2.8 on why the
+        spread rule is not duplicated.
+
+        No slippage here, by operator decision (2026-11-19): FTMO measures
+        equity at quoted prices without slippage, and phase 4's loss limits
+        must be computed on the same equity the firm uses."""
         spread = self.resolved_spread(bar)
-        slippage = costs.slippage_price_units
 
         if self._profile.price_basis == "bid":
             # The quoted price is the bid, so a sell needs no spread
@@ -167,10 +180,9 @@ class ConfiguredCostModel:
         else:
             spread_component = spread / _TWO
 
-        # Slippage always moves against the trader, whichever side.
         if side == "buy":
-            return reference_price + spread_component + slippage
-        return reference_price - spread_component - slippage
+            return reference_price + spread_component
+        return reference_price - spread_component
 
     def fill_price(
         self,
@@ -183,8 +195,34 @@ class ConfiguredCostModel:
         The spread comes from `bar`, which is the FILL bar. The deciding
         bar's spread is irrelevant: it described a market that had already
         moved on by the time this order existed.
+
+        Slippage is added here and only here (spec v3.11), always against
+        the trader. The result is then put on the instrument's price grid,
+        rounded against the trader -- up for a buy, down for a sell, never
+        to nearest (operator decision 2026-11-19): a real fill lands on a
+        quotable price, and rounding the pessimistic way keeps the model
+        from flattering itself by a fraction of a point on every trade.
         """
-        return self.executable_price(order.side, bar, bar.open)
+        quoted = self.executable_price(order.side, bar, bar.open)
+        slippage = self.slippage(bar)
+        point = self._spec_for(bar.symbol).point
+        if order.side == "buy":
+            return _to_grid(quoted + slippage, point, ROUND_CEILING)
+        return _to_grid(quoted - slippage, point, ROUND_FLOOR)
+
+    def slippage(self, bar: Bar) -> Decimal:
+        """Slippage for a fill on `bar`, in price units, before rounding.
+
+        `spread_multiple` scales the spread the fill is CHARGED -- the
+        resolved spread, so a zero judged missing scales the fallback, never
+        zero -- and not the side's spread component. On a bid basis a sell's
+        spread component is zero; scaling that would give every sell a free
+        fill.
+        """
+        config = self._costs_for(bar.symbol).slippage
+        if config.shape == "fixed":
+            return config.value
+        return config.value * self.resolved_spread(bar)
 
     def fees(self, order: Order, fill_price: Decimal) -> Decimal:
         """Commission on one fill, per the profile's configured shape.

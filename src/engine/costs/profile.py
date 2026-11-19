@@ -195,7 +195,31 @@ class FinancingConfig(BaseModel):
     instruments: dict[str, SwapRates] = Field(default_factory=dict)
 
 
+class Slippage(BaseModel):
+    """How far a fill lands from the quoted price, always against the trader.
+    Applied to fills only, never to the valuation of an open position (spec
+    v3.11, §2.8).
+
+    - `fixed` -- `value` price units on every fill.
+    - `spread_multiple` -- `value` x the spread the fill is charged: the fill
+      bar's resolved spread today, the modelled spread once phase 3c.2 lands.
+      C.1 also calls for a volatility term; that is deferred until after the
+      orchestrator design, because a cost model that reads recent bars raises
+      a causality question the orchestrator must answer first.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    shape: Literal["fixed", "spread_multiple"]
+    value: Decimal = Field(ge=0)
+
+
 class InstrumentCosts(BaseModel):
+    # Unknown keys are refused rather than ignored: a key left over from an
+    # older schema -- `slippage_price_units`, say -- would otherwise load
+    # silently and price its cost at zero.
+    model_config = ConfigDict(extra="forbid")
+
     commission: Commission
 
     # Used when a bar's spread is zero and that zero is judged to be
@@ -205,11 +229,10 @@ class InstrumentCosts(BaseModel):
     # trade as free.
     fallback_spread: Decimal | None = Field(default=None, ge=0)
 
-    # Phase 3c owns slippage. It is zero here, and visibly so: the term is
-    # wired into the executable price and exercised by a test that sets it
-    # non-zero, because a zero that is never used cannot be told apart
-    # from one that was never connected.
-    slippage_price_units: Decimal = Field(default=Decimal(0), ge=0)
+    # Zero when omitted, and visibly so: the term is wired into every fill
+    # and exercised by tests that set it non-zero, because a zero that is
+    # never used cannot be told apart from one that was never connected.
+    slippage: Slippage = Field(default_factory=lambda: Slippage(shape="fixed", value=Decimal(0)))
 
     # Date ranges in which a spread of zero is a REAL zero. Everything
     # outside them is treated as missing data. See

@@ -99,8 +99,7 @@ class TestShippedProfiles:
             profile = load_cost_profile(FTMO_PROFILE)
 
         triple = {
-            symbol: rates.triple_weekday
-            for symbol, rates in profile.financing.instruments.items()
+            symbol: rates.triple_weekday for symbol, rates in profile.financing.instruments.items()
         }
         assert triple == {
             "NAS100": "Friday",
@@ -137,7 +136,28 @@ class TestShippedProfiles:
         costs = profile.instruments["XAUUSD"]
         assert isinstance(costs.commission.value, Decimal)
         assert isinstance(costs.fallback_spread, Decimal)
-        assert isinstance(costs.slippage_price_units, Decimal)
+        assert isinstance(costs.slippage.value, Decimal)
+
+    def test_the_test_profile_keeps_zero_slippage(self) -> None:
+        """The 3a/3b golden figures were computed with no slippage; the
+        migration to a slippage block must not change that."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(TEST_PROFILE)
+
+        slippage = profile.instruments["XAUUSD"].slippage
+        assert (slippage.shape, slippage.value) == ("fixed", Decimal(0))
+
+    def test_the_ftmo_profile_has_a_placeholder_spread_multiple_of_half(self) -> None:
+        """Operator decision 2026-11-19: 0.5 x the charged spread, marked
+        PLACEHOLDER -- slippage cannot be measured on a simulated venue
+        (spec C.4), and zero would be the optimistic guess."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(FTMO_PROFILE)
+
+        assert {
+            symbol: (costs.slippage.shape, costs.slippage.value)
+            for symbol, costs in profile.instruments.items()
+        } == {symbol: ("spread_multiple", Decimal("0.5")) for symbol in profile.instruments}
 
 
 class TestDateRanges:
@@ -222,7 +242,50 @@ class TestValidation:
     def test_slippage_defaults_to_zero_when_omitted(self) -> None:
         profile = CostProfile.model_validate(self._profile())
 
-        assert profile.instruments["XAUUSD"].slippage_price_units == Decimal(0)
+        slippage = profile.instruments["XAUUSD"].slippage
+        assert (slippage.shape, slippage.value) == ("fixed", Decimal(0))
+
+    def test_an_unknown_slippage_shape_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="slippage"):
+            CostProfile.model_validate(
+                self._profile(
+                    instruments={
+                        "XAUUSD": {
+                            "commission": {"shape": "per_lot_per_side", "value": "1"},
+                            "slippage": {"shape": "random", "value": "1"},
+                        }
+                    }
+                )
+            )
+
+    def test_a_negative_slippage_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="greater_than_equal"):
+            CostProfile.model_validate(
+                self._profile(
+                    instruments={
+                        "XAUUSD": {
+                            "commission": {"shape": "per_lot_per_side", "value": "1"},
+                            "slippage": {"shape": "spread_multiple", "value": "-0.5"},
+                        }
+                    }
+                )
+            )
+
+    def test_an_unknown_key_in_an_instruments_costs_is_rejected(self) -> None:
+        """The old `slippage_price_units` key left in a profile after the
+        migration must fail at load, not be silently ignored -- ignoring it
+        would quietly price slippage at zero."""
+        with pytest.raises(ValidationError, match="slippage_price_units"):
+            CostProfile.model_validate(
+                self._profile(
+                    instruments={
+                        "XAUUSD": {
+                            "commission": {"shape": "per_lot_per_side", "value": "1"},
+                            "slippage_price_units": "0.05",
+                        }
+                    }
+                )
+            )
 
     def test_an_instrument_without_a_financing_entry_fails_at_load(self) -> None:
         """Structural, not deferred to the first rollover. A profile that

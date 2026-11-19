@@ -47,7 +47,9 @@ cost_profile:
         shape: per_lot_per_side
         value: "3.50"
       fallback_spread: "0.30"
-      slippage_price_units: "0"
+      slippage:
+        shape: fixed
+        value: "0"
       # No zero_spread_genuine ranges: the chosen fixture window contains
       # no zero spreads at all, so the fallback is never reached. Left
       # unconfigured on purpose, so that if a future window did contain a

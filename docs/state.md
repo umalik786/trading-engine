@@ -38,6 +38,8 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 ## Next, in order
 
 1. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
+   Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"); starts with
+   3c.0, the spread-semantics analysis.
 2. **Position conventions:** netting and hedging, before phase 4.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
@@ -820,6 +822,52 @@ Other items that need a live terminal, not part of the extraction:
   every triple charge by a day.
 - **Place one order and check whether the `comment` field survives** (§10 item 2).
 
+## Phase 3c plan and decisions — approved 2026-11-19
+
+Five steps, each with its own exit criterion, in the 3a/3b standard: figures the operator
+computes by hand before the engine runs, for both `AlwaysLong` and `AlwaysShort`, on a
+fixture checked for whether it can tell the correct behaviour from the bug, plus
+deliberate breaks with predicted moves.
+
+| Step | What | Operator hand calculations | Sessions |
+|---|---|---|---|
+| 3c.0 | What the stored bar spread means; EURUSD zeros; fixed Asian-session spreads — from the tick sample, analysis only | Spot-check 3 bars from a tick excerpt | ~1 |
+| 3c.1 | Slippage proportional to the fill bar's spread, always adverse (3c.1a) | Yes, both strategies | ~1 |
+| 3c.2 | Statistical spread model: per instrument, per hour, pessimistic percentile | Yes, both strategies, on a fixture that includes a DST-divergence week | ~2-3 |
+| 3c.3 | Real sizer: weight-based, and risk-based when a stop is given | Yes: lot sizes, then both strategies | ~2 |
+| 3c.4 | Phase 3 exit: everything on together (spec §9) | Yes, both strategies | ~1 |
+
+3c.0's exit criterion: a written finding on what the bar spread is (match rates counted
+only over bars where the candidate statistics differ, so a match is evidence), the
+EURUSD zero-spread evidence, and the operator's decision on how the model treats both.
+
+**Decisions:**
+
+- **Slippage applies to fills only, never to the valuation of open positions. Spread
+  stays in valuation.** Reason: FTMO measures equity at quoted prices without slippage,
+  and phase 4's loss limits must be computed on the same equity the firm uses. A limit
+  computed on a different equity fires at a different moment from the firm's. **This
+  changes current behaviour:** `ConfiguredCostModel.executable_price` today adds
+  slippage in both fills and valuation. No golden figure moves yet, because slippage is
+  zero in every profile, including the golden test profile. The change lands in 3c.1,
+  and the 3c.1 hand figures must be computed under the new rule. Every golden figure is
+  re-checked then.
+- **The volatility term of slippage (C.1) is deferred until after the orchestrator
+  design.** Reason: it needs recent price history inside the cost model, and where a
+  cost model gets bars from without being able to see ahead is a causality question
+  (P2) that belongs to the orchestrator's design, not to the cost model. 3c.1 builds the
+  spread-proportional term only.
+- **Spread-model choices are decided after 3c.0.** Operator's leaning, not yet decided:
+  hours by the server clock (keeps the rollover in one bucket across DST), a fixed
+  percentile (deterministic, hand-checkable), charged spread = max(bar spread, table
+  value), and the table fitted only on data before each backtest's start, rather than
+  accepting the look-ahead leak of a whole-history fit.
+- **Sizer:** weight-based (fraction of equity → lots), and risk-based when the strategy
+  gives a stop price. Always round **down** to the volume step. Size from the
+  **deciding** bar's close, never the fill bar's open (unknown at decision time). Volume
+  minimum, step and maximum move into `config/instruments.yaml` with provenance (read
+  2026-11-17).
+
 ## Next
 
 - ~~**Bid-basis check: read `symbol_info().chart_mode` per symbol.**~~ **Done
@@ -832,6 +880,7 @@ Other items that need a live terminal, not part of the extraction:
   operator-computed figures before the engine runs, for both `AlwaysLong` and
   `AlwaysShort`, on a fixture checked for whether it can tell the correct behaviour from
   the bug it exists to catch, and deliberate breaks with predicted moves.
+  **Plan approved 2026-11-19** — see "Phase 3c plan and decisions" below.
   **Input for the C.1 spread model: EURUSD shows genuine zero-spread ticks on this
   venue** — 30% of ticks on 2026-11-06 had ask = bid (trial-session step 4). The
   config's rule that every stored zero spread is missing data therefore does not hold

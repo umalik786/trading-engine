@@ -868,6 +868,81 @@ EURUSD zero-spread evidence, and the operator's decision on how the model treats
   minimum, step and maximum move into `config/instruments.yaml` with provenance (read
   2026-11-17).
 
+### 3c.0 finding — the stored bar spread is the bar's MINIMUM (2026-11-19)
+
+`analyse_spread_semantics.py` (read only) rebuilt, from the tick sample (2026-10-19 to
+2026-11-13), the minimum, maximum, first, last and average tick spread inside every M1
+and M15 bar, and compared each with the stored `spread`. Counted only over
+**discriminating bars** — bars whose ticks did not all share one spread, where the
+candidates disagree and a match is evidence:
+
+| | Discriminating bars M1 / M15 | min | first | last | mean | max |
+|---|---|---|---|---|---|---|
+| NAS100 | 5,828 / 1,025 | 99.98 / 99.90% | 47 / 38% | 51 / 41% | 6 / 10% | 0% |
+| US500 | 155 / 85 | 100 / 100% | 51 / 52% | 55 / 68% | 16 / 25% | 0% |
+| EURUSD | 26,595 / 1,889 | 99.55 / 99.89% | 37 / 33% | 33 / 28% | 6 / 1% | ~0% |
+| XAUUSD | 15,608 / 1,733 | 99.94 / 100% | 51 / 56% | 56 / 56% | 33 / 33% | 0% |
+| XAGUSD | 23,095 / 1,819 | 99.69 / 98.96% | 22 / 28% | 30 / 31% | 7 / 2% | 0% |
+
+**Operator spot-check:** three bars exported as raw ticks (EURUSD 2026-11-04 22:26,
+XAGUSD 2026-10-26 22:24, XAUUSD 2026-10-27 22:38 UTC, each chosen so min, first and last
+all differ), worked by hand: the stored figure equals the minimum in all three (63, 45,
+47 points), and not the first or last. **Accepted 2026-11-19: bar spread = minimum.**
+Residue, unexplained: a few bars store a spread below every tick spread in them
+(XAGUSD 34 M1 / 16 M15, EURUSD 2, NAS100 1) — possibly quotes absent from the served
+tick history; not investigated.
+
+- **Consequence: the 3a/3b cost model charges the fill bar's MINIMUM spread, so it is
+  optimistic** — about a point on EURUSD and a few on gold in normal hours, far more
+  around the rollover. The 3a golden figures are correct for the rule they test; the
+  rule understates cost. **3c.2 corrects it.** A spread table built from stored bars
+  would be a table of minimums.
+- **EURUSD zeros are genuine.** 30.5% of EURUSD ticks quote ask = bid, evenly across
+  server hours 02-22 (none in 23-01, the rollover); no other instrument has any. Stored
+  EURUSD bars with spread 0: ~0% before 2017, 13.7% (M1) in 2017, 0% 2018-2024, 24.4% in
+  2025, 62.0% in 2026 — genuine minimums of zero, not missing data. **Decision: deferred
+  to 3c.2.** Meanwhile the config's rule (every stored zero = missing → 7-point fallback,
+  against a typical EURUSD tick spread of ~1 point) **overcharges EURUSD, the safe
+  direction**.
+- **Asian-session spreads are not fixed.** XAUUSD server hours 01-08: 10th-90th
+  percentile about 37-47 points, the commonest value only 41-51% of ticks. EURUSD 0-4.
+  The real structure is the rollover: EURUSD at server hour 00 has median 37 points and
+  90th percentile 89, against ~1 the rest of the day — the widening C.1 names, kept in
+  one bucket by server-clock hours.
+- **Spread-table source: decision deferred until FTMO's tick-history depth is surveyed.**
+  Then choose between (a) historical tables from bar minimums with an hour-by-hour
+  correction measured from ticks, and a tick-fitted table.
+- **Tick-history depth, surveyed 2026-11-19** (read only, same trial, login 1515313288).
+  One hour of ticks (14:00-15:00 UTC) requested on the second Wednesday of every quarter
+  from 2005, then of each of the three months before the first quarter with ticks; an
+  empty answer retried once:
+
+  | Instrument | Ticks served from | Last empty probe | Ticks in the probe hour, first probe → latest |
+  |---|---|---|---|
+  | NAS100 | between 2021-09-08 and 2021-10-13 | 2021-09-08 | 10,590 → 31,146 |
+  | US500 | between 2021-09-08 and 2021-10-13 | 2021-09-08 | 4,277 → 8,837 |
+  | EURUSD | between 2019-12-11 and 2020-01-08 | 2019-12-11 | 1,833 → 11,238 |
+  | XAUUSD | between 2021-09-08 and 2021-10-13 | 2021-09-08 | 11,341 → 20,155 |
+  | XAGUSD | between 2021-09-08 and 2021-10-13 | 2021-09-08 | 5,316 → 20,229 |
+
+  No empty quarter after each start. So ticks reach back about **five years** (EURUSD
+  about seven): from late 2021, the same switchover that made the index bars genuine.
+  Before that, metals and EURUSD have 15+ years of bars but no ticks. A tick-fitted
+  table fitted only on data before a backtest's start therefore exists for backtests
+  starting 2022 or later; earlier backtests would need option (a). Starts are bounded by
+  monthly probes, not pinned to a day. Decision between (a) and a tick-fitted table:
+  **operator's, pending.**
+- **Live quotes versus served history — no markup. Question closed 2026-11-19.** For
+  3 minutes (07:20:11-07:23:11 UTC) this account's live quote (`symbol_info_tick`) was
+  sampled about four times a second for all five instruments, then matched by
+  millisecond timestamp against `copy_ticks_range` for the same minutes. **Every live
+  quote was found in the history, with an identical spread, on all five**: NAS100
+  590/590 (spread 195), US500 225/225 (60), EURUSD 229/229 (median 1, range 0-3), XAUUSD
+  412/412 (median 36, 35-39), XAGUSD 279/279 (median 36, 33-39). **Operator reading,
+  Market Watch, ~07:07 UTC the same day:** EURUSD mostly 1 point, range 0-3 over two
+  minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
+  seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
+
 ## Next
 
 - ~~**Bid-basis check: read `symbol_info().chart_mode` per symbol.**~~ **Done

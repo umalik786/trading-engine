@@ -79,28 +79,56 @@ class TestShippedProfiles:
 
     def test_the_ftmo_financing_section_is_verified_unlike_the_rest(self) -> None:
         """The reason provenance is per section: these swap values were
-        read from symbol_info() on a known date, while price_basis and
-        commission are placeholders. One date for the whole file would
-        have to mislabel one or the other."""
+        read from symbol_info() on a known date, while commission is still a
+        placeholder. One date for the whole file would have to mislabel one
+        or the other. Re-read 2026-11-17 on a fresh FTMO trial."""
         with pytest.warns(UserWarning, match="verification is incomplete"):
             profile = load_cost_profile(FTMO_PROFILE)
 
         assert profile.rules_verified is None  # the file as a whole
-        assert profile.financing.provenance.verified == date(2026, 9, 11)
+        assert profile.financing.provenance.verified == date(2026, 11, 17)
         assert profile.financing.provenance.source is not None
         assert profile.financing.provenance.stale_after_days == 30
 
-    def test_the_ftmo_triple_weekday_is_set_but_unverified(self) -> None:
-        """swap_rollover3days was never captured, so Wednesday is the
-        common convention rather than a reading from this account. On the
-        trial-session checklist."""
+    def test_the_ftmo_triple_weekday_is_the_2026_11_17_reading(self) -> None:
+        """symbol_info().swap_rollover3days, read 2026-11-17 with
+        check_chart_mode.py: Friday for the indices, Wednesday for the rest.
+        Only the weekday was read. Whether "Wednesday" names the rollover
+        ending that day or the one beginning it is still unverified."""
         with pytest.warns(UserWarning, match="verification is incomplete"):
             profile = load_cost_profile(FTMO_PROFILE)
 
-        assert all(
-            rates.triple_weekday == "Wednesday"
-            for rates in profile.financing.instruments.values()
-        )
+        triple = {
+            symbol: rates.triple_weekday
+            for symbol, rates in profile.financing.instruments.items()
+        }
+        assert triple == {
+            "NAS100": "Friday",
+            "US500": "Friday",
+            "EURUSD": "Wednesday",
+            "XAUUSD": "Wednesday",
+            "XAGUSD": "Wednesday",
+        }
+
+    def test_the_ftmo_swap_rates_are_the_2026_11_17_reading(self) -> None:
+        """swap_long and swap_short from symbol_info() on FTMO-Demo,
+        2026-11-17 (mt5-verification-2026-11-17.json). Two signs differ from
+        the 2026-09-11 reading: the NAS100 short is now a credit and the
+        XAGUSD short now a cost."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(FTMO_PROFILE)
+
+        rates = {
+            symbol: (r.long_rate, r.short_rate)
+            for symbol, r in profile.financing.instruments.items()
+        }
+        assert rates == {
+            "NAS100": (Decimal("-684.39"), Decimal("20.6")),
+            "US500": (Decimal("-175.75"), Decimal("-4.04")),
+            "EURUSD": (Decimal("-8.8"), Decimal("0.38")),
+            "XAUUSD": (Decimal("-57.69"), Decimal("-4.2")),
+            "XAGUSD": (Decimal("-12.58"), Decimal("-0.93")),
+        }
 
     def test_decimal_values_load_as_decimal_not_float(self) -> None:
         with pytest.warns(UserWarning, match="verification is incomplete"):

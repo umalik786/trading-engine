@@ -1,6 +1,6 @@
 # Current State
 
-**Last session:** 2026-11-17
+**Last session:** 2026-11-19 (proposal (c) applied); before that 2026-11-17
 **Phase:** 3 in progress. 3a (spread, commission) complete 2026-10-01; 3b (financing)
 complete 2026-10-02. **3c is next** (slippage, the C.1 spread model, a real sizer).
 Phase 2 complete 2026-09-30.
@@ -30,10 +30,6 @@ data turned out to contain. Details in the sections below.
 
 Nothing blocks the next step. Waiting on the operator or on a live terminal:
 
-- **Proposal (c)**, the FTMO swap-config diff, is written up below and awaits review.
-  Until it is applied, `config/cost_ftmo_demo.yaml` still has stale swap rates, the wrong
-  triple-swap day for both indices, and `price_basis` marked UNVERIFIED even though it
-  has now been confirmed.
 - **Needs a held position on a live terminal:** whether "Wednesday" triple swap means the
   rollover ending Wednesday or the one beginning it.
 - **Needs a live order:** whether the broker keeps the order `comment` field (§10 item 2).
@@ -41,14 +37,13 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 
 ## Next, in order
 
-1. **Proposal (c):** apply the FTMO swap-config diff (index triple day Friday, current
-   swap rates, verification date 2026-11-17), with the two unit tests that assert the
-   old values updated in the same change. `price_basis` can cite `chart_mode` at the same
-   time.
-2. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
-3. **Position conventions:** netting and hedging, before phase 4.
-4. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
+1. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
+2. **Position conventions:** netting and hedging, before phase 4.
+3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
+
+Proposal (c), the FTMO swap config, was applied 2026-11-19 — see "Proposals from the
+session".
 
 Detail on each is under "Next" further down.
 
@@ -689,7 +684,21 @@ the same history seen from another side.
     gaps".
 
 **(c) FTMO cost config: triple-swap day and swap rates.** Readings from steps 1 and 2.
-Proposed diff to `config/cost_ftmo_demo.yaml`, not applied:
+**APPLIED 2026-11-19**, tests first: the two tests asserting the old values were changed
+to assert the 2026-11-17 readings, and a third added for the swap rates; all three
+failed against the old config, each showing exactly the old values, and pass after.
+`price_basis: bid` marked verified in a comment citing `chart_mode` (the schema has no
+provenance field for it). The source citation names `mt5-verification-2026-11-17.json`
+and its Google Drive backup folder, because the 2026-09-11 file the config used to cite
+was lost with the old laptop. The swap rates are in that JSON; `chart_mode` and the
+triple weekday are not (they came from `check_chart_mode.py`'s printed output), so those
+cite this file instead. The triple-swap **labelling** stays marked unverified. Golden
+tests unaffected (they load `tests/golden/fixtures/cost_test_profile.yaml`). pytest
+313 passed; `-m requires_mt5` 8 passed. Default-run warnings fell from 11 to 4, because
+the old 2026-09-11 swap verification had passed its 30-day staleness limit. Applied as
+proposed, with two additions: the backup location in the citation, and the
+labelling-unverified note on each triple day.
+The diff as proposed on 2026-11-17 (applied 2026-11-19, with the two additions above):
 
 ```diff
      provenance:
@@ -814,9 +823,9 @@ Other items that need a live terminal, not part of the extraction:
 ## Next
 
 - ~~**Bid-basis check: read `symbol_info().chart_mode` per symbol.**~~ **Done
-  2026-11-17:** `chart_mode` = 0 (bid) on all five (trial-session step 2). The config
-  still says UNVERIFIED until proposal (c) is applied.
-- **Proposal (c): FTMO swap config.** See "Proposals from the session" above for the diff.
+  2026-11-17:** `chart_mode` = 0 (bid) on all five (trial-session step 2). Recorded in
+  the config 2026-11-19 with proposal (c).
+- ~~**Proposal (c): FTMO swap config.**~~ **Applied 2026-11-19.**
 - **Phase 3c: slippage, the statistical spread model of Appendix C.1, and a real
   sizer.** 3a (spread, commission) and 3b (financing) are complete — see above.
   Slippage is already wired at zero; 3c gives it a real model. Same standard as 3a/3b:
@@ -865,7 +874,7 @@ Other items that need a live terminal, not part of the extraction:
   assumes even spacing must handle the jumps, as B.6 already requires.
 
 - **Answered 2026-11-17: `chart_mode` = 0 (bid) on all five symbols** (trial-session
-  step 2). The config file will be updated with proposal (c), not yet applied.
+  step 2). Recorded in `config/cost_ftmo_demo.yaml` 2026-11-19 with proposal (c).
   Original entry kept below.
   **The FTMO cost profile's `price_basis` must be verified before any FTMO backtest is
   believed.** MT5 records which price a symbol's bars are built from as

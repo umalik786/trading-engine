@@ -1,17 +1,19 @@
 # FTMO cost profile.
 #
-# EVERY NUMBER IN THIS FILE IS A PLACEHOLDER. Nothing here has been
-# verified against FTMO, and rules_verified is deliberately unset so the
-# profile warns at load, exactly as the FTMO loss limits do (spec 6.5.6).
-# It is not "verified" until every value carries a primary source.
+# Commission and fallback spreads below are STILL PLACEHOLDERS, so
+# rules_verified is deliberately unset and the profile warns at load,
+# exactly as the FTMO loss limits do (spec 6.5.6). The file is not
+# "verified" until every value carries a primary source. What IS verified
+# says so where it stands, with its date and source.
 #
-# price_basis is the dangerous one. It says what the stored bar prices
-# represent, and therefore which side of a trade pays the spread. MT5
-# records this per symbol as symbol_info().chart_mode (0 = bid, 1 = last),
-# and that field was NOT captured by the 2026-09-11 verification run, so
-# "bid" below is an assumption and not a finding. A wrong basis charges
-# the short instead of the long: plausible on every chart, wrong on every
-# trade. VERIFY BEFORE ANY FTMO BACKTEST IS BELIEVED.
+# price_basis says what the stored bar prices represent, and therefore
+# which side of a trade pays the spread. A wrong basis charges the short
+# instead of the long: plausible on every chart, wrong on every trade.
+# VERIFIED 2026-11-17: symbol_info().chart_mode = 0 (bars built from bid)
+# on all five instruments, read on FTMO-Demo with check_chart_mode.py.
+# Source: docs/state.md, "Session readings, 2026-11-17", step 2 -- in the
+# repository, so it survives the loss of the machine. (The schema has no
+# provenance field for price_basis; this comment is its record.)
 #
 # Decimal values are quoted so they are parsed as exact text rather than
 # through a float.
@@ -19,7 +21,7 @@ cost_profile:
   profile: ftmo_demo_placeholder
   rules_verified: null   # unset -> warns at load, per 6.5.6
   rules_source: null
-  price_basis: bid       # UNVERIFIED -- chart_mode never captured
+  price_basis: bid       # VERIFIED 2026-11-17, chart_mode = 0 -- see above
   account_currency: USD
 
   # The trade server's clock, used to place the daily rollover. VERIFIED
@@ -38,48 +40,59 @@ cost_profile:
 
   financing:
     # These swap values ARE verified -- read from symbol_info() on a live
-    # FTMO account. Unlike everything else in this file, they carry a real
-    # date and source, which is why provenance is per section.
+    # FTMO account. Unlike the commission and fallback spreads, they carry a
+    # real date and source, which is why provenance is per section.
     #
     # Thirty days rather than ninety: brokers revise swap rates far more
     # often than they revise a rulebook, so these go stale sooner.
+    #
+    # Swap rates: symbol_info().swap_long / swap_short on FTMO-Demo,
+    # 2026-11-17, saved by verify_mt5.py as mt5-verification-2026-11-17.json.
+    # That file lives in C:\trading\data, outside the repo, and survives a
+    # machine loss only through the Google Drive backups: every dated folder
+    # from G:\My Drive\trading-data-backup\2026-11-17 onward holds a copy.
+    # (The 2026-09-11 file this section used to cite was lost with the old
+    # laptop, which is why the backup location is named here.)
     provenance:
-      verified: "2026-09-11"
-      source: "C:\\trading\\data\\mt5-verification-2026-09-11.json"
+      verified: "2026-11-17"
+      source: "mt5-verification-2026-11-17.json -- C:\\trading\\data, backed up to G:\\My Drive\\trading-data-backup\\2026-11-17 (and later dated folders)"
       stale_after_days: 30
     #
-    # triple_weekday is NOT verified. symbol_info().swap_rollover3days was
-    # never captured, so Wednesday below is the common convention rather
-    # than a reading from this account. Confirm by holding a position over
-    # a Wednesday night on the trial and reading the swap off the deal
-    # record. Note also that "Wednesday" means the rollover from Wednesday
-    # into Thursday -- see docs/state.md on the labelling convention.
+    # triple_weekday: the WEEKDAY is verified, the LABELLING is not.
+    # symbol_info().swap_rollover3days read 2026-11-17 with
+    # check_chart_mode.py: Friday (5) for both indices, Wednesday (3) for
+    # the rest. Source: docs/state.md, "Session readings, 2026-11-17",
+    # step 2 (not in the JSON above). STILL UNVERIFIED: whether "Wednesday"
+    # names the rollover ending Wednesday (Wednesday into Thursday, the
+    # convention the engine uses) or the one beginning it. Only a position
+    # held across the night, with the swap read off the deal record, can
+    # settle that. Getting it wrong moves every triple charge by a day.
     instruments:
       NAS100:
         shape: points
-        long_rate: "-514.2"
-        short_rate: "-102.6"
-        triple_weekday: Wednesday   # UNVERIFIED
+        long_rate: "-684.39"
+        short_rate: "20.6"          # positive: a credit to a short
+        triple_weekday: Friday      # weekday read 2026-11-17; labelling UNVERIFIED
       US500:
         shape: points
-        long_rate: "-130.92"
-        short_rate: "-29.24"
-        triple_weekday: Wednesday   # UNVERIFIED
+        long_rate: "-175.75"
+        short_rate: "-4.04"
+        triple_weekday: Friday      # weekday read 2026-11-17; labelling UNVERIFIED
       EURUSD:
         shape: points
-        long_rate: "-9.47"
-        short_rate: "0.35"          # positive: a credit to a short
-        triple_weekday: Wednesday   # UNVERIFIED
+        long_rate: "-8.8"
+        short_rate: "0.38"          # positive: a credit to a short
+        triple_weekday: Wednesday   # weekday read 2026-11-17; labelling UNVERIFIED
       XAUUSD:
         shape: points
-        long_rate: "-83.0"
-        short_rate: "-8.3"
-        triple_weekday: Wednesday   # UNVERIFIED
+        long_rate: "-57.69"
+        short_rate: "-4.2"
+        triple_weekday: Wednesday   # weekday read 2026-11-17; labelling UNVERIFIED
       XAGUSD:
         shape: points
-        long_rate: "-15.2"
-        short_rate: "0.5"           # positive: a credit to a short
-        triple_weekday: Wednesday   # UNVERIFIED
+        long_rate: "-12.58"
+        short_rate: "-0.93"
+        triple_weekday: Wednesday   # weekday read 2026-11-17; labelling UNVERIFIED
 
   instruments:
     NAS100:

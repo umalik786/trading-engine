@@ -36,8 +36,9 @@ COST PROFILE
 ------------
 `fixtures/cost_test_profile.yaml`: bid basis, commission 3.50 per lot per
 side, slippage zero. The bid basis is an assumption OF THIS TEST, chosen so
-a figure can be computed by hand. It is not a claim about FTMO, whose
-`chart_mode` has never been captured -- see `config/cost_ftmo_demo.yaml`.
+a figure can be computed by hand. It is not a claim about FTMO, though FTMO's
+`chart_mode` was read on 2026-11-17 as 0 (bars built from bid) -- see
+`config/cost_ftmo_demo.yaml`.
 
 FINANCING (phase 3b)
 --------------------

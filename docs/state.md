@@ -38,8 +38,9 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 ## Next, in order
 
 1. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
-   Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"); starts with
-   3c.0, the spread-semantics analysis.
+   Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"). **3c.0
+   complete 2026-11-19** (bar spread = minimum; spread-table method decided). **3c.1,
+   slippage, is next.**
 2. **Position conventions:** netting and hedging, before phase 4.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
@@ -930,8 +931,31 @@ tick history; not investigated.
   Before that, metals and EURUSD have 15+ years of bars but no ticks. A tick-fitted
   table fitted only on data before a backtest's start therefore exists for backtests
   starting 2022 or later; earlier backtests would need option (a). Starts are bounded by
-  monthly probes, not pinned to a day. Decision between (a) and a tick-fitted table:
-  **operator's, pending.**
+  monthly probes, not pinned to a day.
+- **Spread-table source DECIDED 2026-11-19: option (a) for all periods, one consistent
+  method.** Historical spread from stored bar minimums plus a correction (pessimistic
+  tick spread versus bar minimum, per instrument per server hour). No tick-fitted table
+  for recent years alongside it: a change of method in late 2021 would put a seam in
+  the walk-forward results that could be mistaken for a change in the market.
+  - **The correction is fitted only on ticks before each backtest's start**, where such
+    ticks exist.
+  - **Validated out of sample before 3c.2 relies on it:** fit on ticks to the end of
+    2024, test against actual 2025-2026 tick spreads, and report how well it predicts,
+    per instrument and server hour.
+  - **Open question for 3c.2, to be proposed with evidence:** whether the correction is
+    added in points or as a percentage. Spreads were wider in earlier years, so the two
+    diverge most for early backtests.
+  - **Prerequisite for 3c.2, needs an operator decision:** the fit and the validation
+    need tick history from late 2021 (EURUSD 2020) to 2026; only the four-week sample
+    is extracted. That sample takes 240 MB, so the full span at today's density is about
+    15 GB (perhaps 8-12 GB, since early ticks are about half as dense), carried by every
+    backup. A sampled subset, such as one week per month, would be about a quarter of
+    that.
+  - **Known limitation**, recorded under carried-forward gaps.
+
+**3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
+(operator-checked); the EURUSD zero-spread evidence is recorded and its treatment
+deferred to 3c.2; the spread-table method is decided.
 - **Live quotes versus served history — no markup. Question closed 2026-11-19.** For
   3 minutes (07:20:11-07:23:11 UTC) this account's live quote (`symbol_info_tick`) was
   sampled about four times a second for all five instruments, then matched by
@@ -979,6 +1003,17 @@ tick history; not investigated.
     breaks it. Until then the guard holds only for callers that pass the date.
 
 ## Carried-forward gaps (not blocking)
+
+- **Known limitation — backtests before the tick history use a spread correction
+  measured from later data. Untested assumption.** FTMO serves ticks from about January
+  2020 (EURUSD) and September/October 2021 (NAS100, US500, XAUUSD, XAGUSD). The 3c.2
+  spread model corrects bar minimums with a tick-measured correction fitted only on
+  ticks before each backtest's start, but a backtest starting before the ticks begin has
+  no such ticks. It must borrow a correction measured later. That assumes the
+  relationship between the bar minimum and the pessimistic spread held in 2005-2021 as
+  it does since. Nothing in this project tests that, and nothing currently can. Recorded
+  in the same way as the simulated-venue caveat (spec C.4, §6.5.9): stated where results
+  are read, not quietly treated as settled. Decided 2026-11-19.
 
 - **Known limitation of `check_bar_spacing.py`: a wrong-width stretch inside a month
   passes when correct-width bars outnumber it.** It judges each month by its

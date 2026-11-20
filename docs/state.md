@@ -1238,8 +1238,8 @@ tick history; not investigated.
     - **DATA-QUALITY FINDING: EURUSD's stored bar spreads, 2005-2021, are not
       trustworthy as a measured history** (read-only examination, 2026-11-20, M15).
       Only 2020-2021 can be checked against ticks, and there they are wrong. Before
-      2020 there is nothing to check them against, and most years look like settings
-      rather than measurements:
+      2020 there is nothing to check them against. (Corrected 2026-11-20: 2009-2019 is
+      *unverifiable*, not *wrong*. See below the table.)
 
       | Years | What the stored spread looks like |
       |---|---|
@@ -1253,15 +1253,42 @@ tick history; not investigated.
       | Oct 2021-2024 | 2 on 93-96% of bars. Agrees with the ticks (data check passes from 2022). |
       | 2025-2026 | Zeros rising: 26% (2025), 68% (2026). Genuine, per the 3c.0 tick evidence. |
 
-      **DECIDED 2026-11-20 (operator): EURUSD's stored spreads before 2022 are
-      recorded as untrustworthy:** fixed values in 2005-2008, fixed-looking values in
-      2015-2019, and demonstrably wrong values from May 2020 to September 2021. A guard
-      is added to Next.
-      **Consequence: any EURUSD backtest before 2022 rests on a spread series that is
-      either unverifiable or demonstrably wrong.** The 3c.2 correction, fitted from
-      2022, can't repair the bar minimum it is added to. How to cost pre-2022 EURUSD is
-      undecided. The options (a floor, an external spread history, or not backtesting
-      EURUSD before 2022) are for the operator.
+      **DECIDED 2026-11-20 (operator), CORRECTED the same day.** EURUSD's stored
+      spreads before 2022 are not trusted:
+      - 2005-2008: one fixed value per year.
+      - **2009-2019: unverifiable, not wrong.** A dominant value can be a genuine broker
+        floor, as 2022-2024 shows: EURUSD 2 points on 93-96% of bars, passing the data
+        check against ticks. Before 2020 there are no ticks to tell a floor from a
+        placeholder.
+      - **May 2020 to September 2021: demonstrably wrong.** These are the only years
+        contradicted by FTMO's own ticks.
+
+      The 3c.2 correction, fitted from 2022, can't repair the bar minimum it is added
+      to.
+
+    - **Stored-spread profile, the other four instruments** (read-only, 2026-11-20,
+      M15):
+
+      | Instrument and period | Stored spread | Verdict |
+      |---|---|---|
+      | XAUUSD 2005 (XAGUSD 2008) to Sep 2010 | Zero on 100% of bars; both begin recording in October 2010 | Missing |
+      | Metals, late 2010-2011 | Coarse steps (XAUUSD 50/60/70/80; XAGUSD 40/50/60) | Measurement-like at coarser precision; unverifiable |
+      | Metals 2012-2020 | 27-182 distinct values a year; distributions move year to year. Some dominant values (XAUUSD 24 on 64% of 2017 bars) | Looks like measurement; unverifiable |
+      | Metals Jan-Sep 2021 | Irregular zeros: XAUUSD 9-86% a month; XAGUSD exactly 25% every month from February to August | Untrustworthy |
+      | Indices before 2021-09-15 | 100% zero, and the bars aren't genuinely M15 | Already refused (`bars_genuine_from`) |
+      | Indices about 15-30 Sep 2021 | Zero | Missing |
+      | Indices 1-17 Oct 2021 | One value on every bar: 60 (NAS100), 39 (US500) | Setting or floor; unverifiable |
+      | All four from Oct 2021 | Data check against ticks: 0.07-0.62% disagree | Verified |
+
+      **The XAGUSD 25% zeros are not investigated** (operator): they fall inside the
+      excluded period.
+
+    - **DECIDED 2026-11-20 (operator): verified cost history starts 2022-01-01 for
+      all five instruments.** Stored per instrument in config as
+      `cost_history_verified_from`, because another broker's dates will differ. The
+      guard is in Next.
+      **Consequence for phase 5: about five years of trustworthy cost history,
+      growing monthly.**
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
 (operator-checked); the EURUSD zero-spread evidence is recorded and its treatment
@@ -1369,11 +1396,12 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
   applied to bars from another, gives plausible numbers that are wrong. The guard
   compares the two at startup and stops on a mismatch.
 
-- **Refuse EURUSD backtests starting before 2022 by default** (added 2026-11-20), in
-  the same way `bars_genuine_from` refuses non-genuine bars, until a credible spread
-  source exists. Its stored spreads before 2022 are untrustworthy (see the 3c.2
-  data-quality finding). Configuration, not code: a per-instrument date in
-  `config/instruments.yaml`, so the date can move if a spread source is found.
+- **The engine refuses backtests starting before each instrument's
+  `cost_history_verified_from` date** (decided 2026-11-20; replaces the EURUSD-only
+  item). The date is per instrument in config: 2022-01-01 for all five on FTMO. An
+  explicit override allows earlier starts **for exploratory runs only, and stamps
+  their results "costs unverified"**. It works the way `bars_genuine_from` refuses
+  non-genuine bars. See the 3c.2 decision on verified cost history.
 
 ## Carried-forward gaps (not blocking)
 

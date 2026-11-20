@@ -41,7 +41,7 @@ These are design principles from the spec, restated here because they are the on
 
 ## Current state
 
-**Phase: 3 — in progress. 3a (spread, commission) complete 2026-10-01; 3b (overnight financing) complete 2026-10-02. FTMO swap config updated to the 2026-11-17 readings (proposal (c), applied 2026-11-19). Next: 3c (slippage, the statistical spread model of Appendix C.1, a real sizer); then position conventions (netting and hedging); then orchestrator design, before phase 4.**
+**Phase: 3 — in progress. 3a (spread, commission) complete 2026-10-01; 3b (overnight financing) complete 2026-10-02. FTMO swap config updated to the 2026-11-17 readings (proposal (c), applied 2026-11-19). 3c.0 (bar spread is the minimum) and 3c.1 (slippage) complete 2026-11-19. 3c.2 (spread correction): wiring built and tested, golden figures pending the operator's hand calculation — see the "RESUME HERE" section of `docs/state.md`. Then 3c.3 (sizer); then position conventions (netting and hedging); then orchestrator design, before phase 4.**
 
 Last session 2026-11-17: laptop replaced and market data re-extracted, including M1 (new) and a tick sample. FTMO index history before 2021-09-15 (M1/M15) and 2021-01-22 (H1/H4) is not genuinely its timeframe; `bars_genuine_from` in `config/instruments.yaml` guards it. See `docs/state.md`.
 

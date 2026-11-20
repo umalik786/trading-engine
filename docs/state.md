@@ -954,6 +954,105 @@ tick history; not investigated.
     that. **Proposed approach (operator's leaning, 2026-11-19; to be decided when 3c.2
     starts):** sample one week per month, the week containing the 15th, rather than the
     full history.
+  - **DECIDED 2026-11-20, with one change to the rule.** One sampled week per month,
+    each a Sunday 00:00 UTC to Sunday 00:00 UTC window (exactly one trading week: the
+    Sunday open, five daily rollovers, the Friday close). **The anchor day rotates
+    through the 4th, 11th, 18th and 25th: anchor index = (month − 1 + year) mod 4**, and
+    the sampled week is the Sunday-to-Sunday week containing that day. **Reasons:**
+    - A fixed 15th systematically excluded US non-farm payrolls (always on or before
+      the 7th) and over-sampled CPI (usually the 10th-15th). C.1 singles out spread
+      behaviour around scheduled releases, so which releases are sampled matters.
+    - A rotation by month alone, (month − 1) mod 4, was tried first and rejected:
+      twelve is a multiple of four, so it repeats every year and each calendar month
+      always got the same anchor. December was always Christmas week, late-month Fed
+      meetings were always missed, and the CPI share stayed high. Adding the year
+      moves the cycle on by one each year, so every calendar month passes through all
+      four anchors over any four consecutive years.
+    - Approximate release coverage, EURUSD 83 weeks / others 62: payrolls 18.1% /
+      19.4%, CPI 22.9% / 19.4%, Fed decisions 16.9% / 16.1%, against ~23%, ~23% and
+      ~15% for a random week. The month-only rule gave 16.9% / 26.5% / 16.9% for
+      EURUSD. Payrolls stay slightly low under any 4/11/18/25 rule, because only the
+      4th-anchored week can contain a first Friday, and it misses when that Friday is
+      the 1st or 2nd. **These coverage figures are approximate and were used only to
+      compare rules**: payrolls taken as the first Friday, CPI as about the 12th (moved
+      to Monday if on a weekend), Fed decision dates from recall, not checked against
+      federalreserve.gov.
+    Range: EURUSD from 2019-12, the others
+    from 2021-09 (the months of the last empty depth probes, so each true start is
+    captured), to the October 2026 week.
+  - **INCIDENT 2026-11-20, during the first sample extraction: eight-day weeks.**
+    - **What happened.** A deliberate break (`_WEEK = timedelta(days=7)` → `8`) was
+      restored byte for byte, with the SHA-256 confirmed. But the extraction, started
+      8 seconds later, ran an eight-day rule. The edit kept the file the same length,
+      and it was restored within the same second. Python's bytecode cache counts a file
+      as unchanged when its size and its modification second both match, so it kept
+      using the compiled broken version. Every week gained its following Sunday.
+    - **Found by** the operator asking for the log: a date the rule could not produce
+      (2026-04-12) appeared in it.
+    - **Cleanup.** Stopped mid-XAUUSD. Every in-rule day was correctly extracted, since
+      the time conversion was unaffected. The 199 extra Sunday files (EURUSD 68, NAS100
+      49, US500 49, XAUUSD 33; about 12 MB) were listed, checked to be Sundays outside
+      every sampled week, and deleted. `__pycache__` cleared. The run is resumed, with
+      days on disk skipped and all five manifests rewritten with seven-day weeks.
+    - **Lesson: a hash of the source is not proof that the code that runs is
+      restored.** The earlier break runs (3a/3b, (b), 3c.1) were checked: in each, the
+      last break on any file changed its length, so the cache was rebuilt, and both
+      suites pass from a clean cache.
+    - **Safeguards, decided 2026-11-20:**
+      1. Break harnesses run with `PYTHONDONTWRITEBYTECODE=1`, clear `__pycache__`
+         after every restore, and both test suites are run from a clean cache after
+         any break run and before any real extraction.
+      2. **Defence in depth:** `extract_mt5_ticks.py --monthly-sample` checks, before
+         connecting to MT5, that every sample week is exactly Sunday 00:00 UTC + 7
+         days, and refuses to run otherwise. Tested (six tests, which failed first;
+         today's code "connected to MT5 despite an invalid sample rule"). Two breaks
+         of the guard were each caught. **The incident reproduced on the real command
+         line — the rule's source edited to eight days — was refused before
+         connecting**, and nothing was written.
+  - **EXTRACTED 2026-11-20** (resumed run 06:41-06:53 UTC, exit 0, after the
+    cleanup). Every manifest equals the rule: each week is exactly Sunday + 7 days, and
+    no file falls outside the rule.
+
+    | Instrument | Weeks | Day files | Size | Ticks | First day with ticks |
+    |---|---|---|---|---|---|
+    | NAS100 | 62 | 364 | 670 MB | 65,720,358 | 2021-10-17 |
+    | US500 | 62 | 364 | 193 MB | 18,806,193 | 2021-10-17 |
+    | EURUSD | 83 | 488 | 347 MB | 33,147,143 | 2020-01-01 |
+    | XAUUSD | 62 | 364 | 522 MB | 47,730,241 | 2021-10-17 |
+    | XAGUSD | 62 | 364 | 309 MB | 29,507,386 | 2021-10-17 |
+
+    About 2.04 GB in all, against the ~2.3 GB estimate. No Saturday has any ticks. The
+    only empty weekday after each start is **2022-04-15, Good Friday**, for the four
+    non-FX instruments; EURUSD traded.
+  - **Tick DST check** (`check_tick_dst.py`, EURUSD Sunday open, 17:00-17:30 New York):
+    - **European-calendar version: 7 failures**, six of them exactly the weeks where
+      the calendars disagree at the open (2020-03-15, 2021-03-21, 2022-10-30,
+      2024-03-17, 2025-03-23, 2026-10-25), each an hour late at 18:0x New York.
+    - **As stored: 79 passed, 1 failed, 3 with no Sunday ticks.** All six disagreeing
+      weeks pass at 17:05-17:08. The weeks with no Sunday ticks are 2019-12-15 and
+      2019-12-29 (before EURUSD's history begins on 2020-01-01) and 2023-12-31 (New
+      Year's Eve).
+    - **The one failure, 2020-06-07, is a late venue open, not a timezone fault.** The
+      first tick is at 21:48:38 UTC = 17:48 New York, 43 minutes late rather than a
+      whole hour. The separately extracted M1 bars also begin at 21:48 that Sunday,
+      and the previous Friday's last bar (20:54 UTC = 16:54 New York) sits exactly at
+      the 17:00 close, which a wrong offset would also have moved.
+    - **Window widened to [17:00, 18:00) New York, operator decision 2026-11-20.**
+      2020-06-07 prompted the review. **The change is justified by an argument
+      independent of the data, not by making that week pass:** a calendar error shifts
+      the open by exactly one hour, and a half-open window exactly one hour wide cannot
+      contain any time shifted by one hour. So every calendar error still fails,
+      however late inside the hour the open falls. Any wider window would lose that
+      guarantee.
+    - **Rerun both ways:** European calendar → exit 1, **6 failures, exactly the 6
+      disagree weeks and no others**. As stored → exit 0, **80 passed**, 0 failed, 3
+      with no Sunday ticks (2020-06-07 passes at 17:48).
+  - Both suites from a clean cache: 350 passed, 15 MT5 passed. Bar DST check 3/3.
+  - **Backup:** `G:\My Drive\trading-data-backup\2026-11-20`, **2,422 files and
+    2,770,428,750 bytes at both ends**, 0 failed.
+    Stored in
+    `C:\trading\data\raw\<instrument>\ticks_monthly\`, separate from the 3c.0 sample in
+    `ticks\`, which `analyse_spread_semantics.py` reads in full.
   - **Known limitation**, recorded under carried-forward gaps.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum

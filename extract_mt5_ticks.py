@@ -62,9 +62,26 @@ from extract_mt5_data import (
     server_epoch_to_utc,
     utc_instant_to_mt5_request,
 )
+from tick_sample_weeks import sample_weeks
 
 DEFAULT_START = date(2026, 10, 19)
 DEFAULT_END = date(2026, 11, 14)  # exclusive
+
+# --monthly-sample (phase 3c.2): one week per month into its own folder, kept
+# apart from the 3c.0 sample in ticks/, which analyse_spread_semantics.py reads
+# in full. Each instrument starts in the month of its last EMPTY depth probe
+# (docs/state.md, "Tick-history depth, surveyed 2026-11-19"), so the true start
+# of FTMO's tick history is captured rather than assumed; early weeks may be
+# empty or partial, and the per-day counts show it.
+MONTHLY_SUBDIR = "ticks_monthly"
+MONTHLY_FIRST_MONTH = {
+    "NAS100": (2021, 9),
+    "US500": (2021, 9),
+    "EURUSD": (2019, 12),
+    "XAUUSD": (2021, 9),
+    "XAGUSD": (2021, 9),
+}
+MONTHLY_LAST_MONTH = (2026, 10)
 
 # A minute either side of each day's request, filtered away afterwards.
 REQUEST_MARGIN = timedelta(minutes=1)
@@ -117,9 +134,15 @@ def ticks_to_table(converted: list[tuple[datetime, object]], digits: int) -> pa.
 
 
 def extract_instrument(  # noqa: PLR0913, PLR0917
-    internal_name: str, broker_symbol: str, digits: int, start: date, end: date, force: bool
+    internal_name: str,
+    broker_symbol: str,
+    digits: int,
+    start: date,
+    end: date,
+    force: bool,
+    subdir: str = "ticks",
 ) -> dict[str, int]:
-    out_dir = DATA_ROOT / internal_name / "ticks"
+    out_dir = DATA_ROOT / internal_name / subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     per_day: dict[str, int] = {}
 
@@ -173,6 +196,92 @@ def write_manifest(  # noqa: PLR0913, PLR0917
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+_SEVEN_DAYS = timedelta(days=7)
+_SUNDAY = 6  # date.weekday(): Monday 0 ... Sunday 6
+
+
+def validate_sample_weeks(weeks: list[tuple[datetime, datetime]]) -> None:
+    """Refuse any sample week that is not exactly Sunday 00:00 UTC to the next
+    Sunday 00:00 UTC. Raises ValueError naming the first bad week.
+
+    Defence in depth, added after the 2026-11-20 incident: a stale compiled
+    copy of the week rule (left by a same-length deliberate break restored
+    within one second) produced eight-day weeks, and the extraction ran on it.
+    The rule's own tests passed against the source; this checks what is
+    actually running, at the moment it runs.
+    """
+    for start, end in weeks:
+        where = f"sample week starting {start.isoformat()}"
+        if start.utcoffset() != timedelta(0) or end.utcoffset() != timedelta(0):
+            raise ValueError(f"{where}: bounds must be in UTC")
+        if start.weekday() != _SUNDAY:
+            raise ValueError(f"{where}: must start on a Sunday, not a {start:%A}")
+        if (start.hour, start.minute, start.second, start.microsecond) != (0, 0, 0, 0):
+            raise ValueError(f"{where}: must start at 00:00 UTC")
+        if end - start != _SEVEN_DAYS:
+            raise ValueError(f"{where}: must last exactly 7 days, not {end - start}")
+
+
+def extract_weeks(  # noqa: PLR0913
+    internal_name: str,
+    broker_symbol: str,
+    digits: int,
+    weeks: list[tuple[datetime, datetime]],
+    *,
+    subdir: str,
+    force: bool,
+) -> dict[str, int]:
+    """Extract several separate weeks into one folder; per-day counts for
+    all of them. Each week is whole UTC days, [start, end)."""
+    per_day: dict[str, int] = {}
+    for start, end in weeks:
+        print(f"  week from {start:%Y-%m-%d}")
+        per_day.update(
+            extract_instrument(
+                internal_name, broker_symbol, digits, start.date(), end.date(), force, subdir
+            )
+        )
+    return per_day
+
+
+def write_sample_manifest(  # noqa: PLR0913
+    internal_name: str,
+    broker_symbol: str,
+    digits: int,
+    weeks: list[tuple[datetime, datetime]],
+    per_day: dict[str, int],
+    *,
+    server: str,
+    terminal_build: int,
+) -> None:
+    """ONE manifest for the whole monthly sample, written after every week is
+    done -- never per week, which would leave it describing only the last."""
+    manifest = {
+        "internal_name": internal_name,
+        "broker_symbol": broker_symbol,
+        "kind": "ticks_monthly_sample",
+        "sample_rule": (
+            "one Sunday 00:00 UTC to Sunday 00:00 UTC week per month, containing the "
+            "anchor day ANCHOR_DAYS[(month - 1 + year) mod 4] of (4, 11, 18, 25); "
+            "see tick_sample_weeks.py and docs/state.md"
+        ),
+        "source_server": server,
+        "mt5_terminal_build": terminal_build,
+        "server_timezone": {
+            "convention": SERVER_TZ_CONVENTION,
+            "verified": SERVER_TZ_VERIFIED_DATE,
+            "source": SERVER_TZ_SOURCE,
+        },
+        "extracted_at_utc": datetime.now(UTC).isoformat(),
+        "weeks": [{"start_utc": s.isoformat(), "end_utc": e.isoformat()} for s, e in weeks],
+        "total_ticks": sum(per_day.values()),
+        "ticks_per_day": dict(sorted(per_day.items())),
+        "digits": digits,
+    }
+    path = DATA_ROOT / internal_name / MONTHLY_SUBDIR / "manifest.json"
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Extract an MT5 tick sample to parquet, day by day."
@@ -180,14 +289,32 @@ def main() -> None:
     parser.add_argument("--start", type=date.fromisoformat, default=DEFAULT_START)
     parser.add_argument("--end", type=date.fromisoformat, default=DEFAULT_END, help="exclusive")
     parser.add_argument("--force", action="store_true", help="Re-fetch days already on disk.")
+    parser.add_argument(
+        "--monthly-sample",
+        action="store_true",
+        help=f"Extract the phase 3c.2 sample (one week per month) into {MONTHLY_SUBDIR}/ "
+        "instead of the --start/--end window.",
+    )
     args = parser.parse_args()
     if args.end <= args.start:
         parser.error("--end must be after --start")
 
     print("=" * 70)
     print("MT5 TICK EXTRACTION -- read only, places no orders")
-    print(f"Window (UTC): {args.start} to {args.end} (exclusive)")
+    if args.monthly_sample:
+        print(
+            f"Monthly sample into {MONTHLY_SUBDIR}/, through {MONTHLY_LAST_MONTH[0]}-"
+            f"{MONTHLY_LAST_MONTH[1]:02d}"
+        )
+    else:
+        print(f"Window (UTC): {args.start} to {args.end} (exclusive)")
     print("=" * 70)
+
+    if args.monthly_sample:
+        # Before connecting: an invalid rule must not fetch or write anything.
+        for first in MONTHLY_FIRST_MONTH.values():
+            validate_sample_weeks(sample_weeks(first, MONTHLY_LAST_MONTH))
+        print("Sample weeks checked: every week is Sunday 00:00 UTC + 7 days.")
 
     if not mt5.initialize():
         print("\nCould not connect to the terminal:", mt5.last_error())
@@ -210,6 +337,27 @@ def main() -> None:
             print(f"\n{internal_name}: symbol_info returned None: {mt5.last_error()}")
             continue
         print(f"\n{internal_name} ({broker_symbol})  ticks")
+        if args.monthly_sample:
+            weeks = sample_weeks(MONTHLY_FIRST_MONTH[internal_name], MONTHLY_LAST_MONTH)
+            per_day = extract_weeks(
+                internal_name,
+                broker_symbol,
+                info.digits,
+                weeks,
+                subdir=MONTHLY_SUBDIR,
+                force=args.force,
+            )
+            write_sample_manifest(
+                internal_name,
+                broker_symbol,
+                info.digits,
+                weeks,
+                per_day,
+                server=server,
+                terminal_build=terminal_build,
+            )
+            totals[internal_name] = sum(per_day.values())
+            continue
         per_day = extract_instrument(
             internal_name, broker_symbol, info.digits, args.start, args.end, args.force
         )

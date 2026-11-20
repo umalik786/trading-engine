@@ -100,6 +100,12 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "1.40"     # PLACEHOLDER -- near the observed median
+      spread_correction:          # validated 3c.2; values come from a fitted table
+        form: points
+        structure: per_hour
+        percentile: 90
+        min_fit_weeks: 12
+        source: "docs/state.md, 3c.2 validation (docs/results/3c2_validation_amended_2026-11-20.txt), approved 2026-11-20"
       slippage:                   # PLACEHOLDER -- see the note below
         shape: spread_multiple
         value: "0.5"
@@ -108,6 +114,12 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.39"     # PLACEHOLDER
+      spread_correction:          # validated 3c.2; values come from a fitted table
+        form: points
+        structure: constant
+        percentile: 90
+        min_fit_weeks: 12
+        source: "docs/state.md, 3c.2 validation (docs/results/3c2_validation_amended_2026-11-20.txt), approved 2026-11-20"
       slippage:                   # PLACEHOLDER
         shape: spread_multiple
         value: "0.5"
@@ -116,6 +128,16 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.00007"  # PLACEHOLDER
+      spread_correction:          # validated 3c.2; values come from a fitted table
+        form: points
+        structure: per_hour
+        percentile: 90
+        min_fit_weeks: 12
+        source: "docs/state.md, 3c.2 validation (docs/results/3c2_validation_amended_2026-11-20.txt), approved 2026-11-20"
+      # Verified against FTMO's ticks from 2022 (3c.2 data check); open-ended.
+      # Its stored spreads before 2022 are untrustworthy -- docs/state.md.
+      zero_spread_genuine:
+        - from: "2022-01-01"
       slippage:                   # PLACEHOLDER
         shape: spread_multiple
         value: "0.5"
@@ -124,6 +146,12 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.16"     # PLACEHOLDER
+      spread_correction:          # validated 3c.2; values come from a fitted table
+        form: points
+        structure: constant
+        percentile: 90
+        min_fit_weeks: 12
+        source: "docs/state.md, 3c.2 validation (docs/results/3c2_validation_amended_2026-11-20.txt), approved 2026-11-20"
       slippage:                   # PLACEHOLDER
         shape: spread_multiple
         value: "0.5"
@@ -132,6 +160,12 @@ cost_profile:
         shape: per_lot_per_side   # UNVERIFIED
         value: "0"                # PLACEHOLDER
       fallback_spread: "0.019"    # PLACEHOLDER
+      spread_correction:          # validated 3c.2; values come from a fitted table
+        form: percentage
+        structure: constant
+        percentile: 90
+        min_fit_weeks: 12
+        source: "docs/state.md, 3c.2 validation (docs/results/3c2_validation_amended_2026-11-20.txt), approved 2026-11-20"
       slippage:                   # PLACEHOLDER
         shape: spread_multiple
         value: "0.5"
@@ -144,10 +178,18 @@ cost_profile:
   # fill comparison measures the firm's simulator, not the market (spec C.4,
   # §6.5.9). It stays a placeholder until a live-capital venue exists.
   #
-  # zero_spread_genuine is deliberately absent everywhere above, so every
-  # zero spread in the stored history is treated as missing data and
-  # resolves to the fallback. That is the pessimistic default and the
+  # zero_spread_genuine is deliberately absent everywhere above EXCEPT EURUSD
+  # from 2022-01-01 (decided 2026-11-20: verified against FTMO's ticks), so
+  # every other zero spread in the stored history is treated as missing data
+  # and resolves to the fallback. That is the pessimistic default and the
   # right one here: zeros are 100% of XAUUSD bars before 2010 and 100% of
   # the index bars from 2017 to 2020, which is the broker not recording
   # spread rather than the spread being nil. Declaring a range genuine is
   # the only way to loosen it, and needs checking first.
+
+  # spread_correction (phase 3c.2): the METHOD per instrument, as validated
+  # out of sample (fit to end-2024, tested on 2025-2026). The VALUES are not
+  # here: they come from a table fitted for a stated cutoff by
+  # fit_spread_correction.py, and the engine refuses to cost any bar before
+  # that cutoff. A fallback spread is never corrected. Confirm on sample
+  # weeks from November 2026 onward (the test period informed the choices).

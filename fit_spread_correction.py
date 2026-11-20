@@ -39,6 +39,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import warnings
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -53,7 +54,9 @@ import pyarrow.parquet as pq
 import yaml
 
 from engine.core.clock import DstSwitchedServerClock
-from spread_correction import (
+from engine.costs.correction_table import SpreadCorrectionTable
+from engine.costs.profile import load_cost_profile
+from engine.costs.spread_correction import (
     FORMS,
     GAP_US,
     MIN_FIT_BARS,
@@ -67,6 +70,7 @@ from spread_correction import (
     coverage_range,
     covered,
     fit_correction,
+    fit_entry,
     fit_table,
     integrity_ok,
     judge,
@@ -193,8 +197,10 @@ class InstrumentData:
 
 
 def build(
-    instrument: str, keep_ticks: bool = False
+    instrument: str, keep_ticks: bool = False, until: datetime | None = None
 ) -> tuple[InstrumentData, dict[datetime, WeekTicks]]:
+    """`until`: only whole sampled weeks ending at or before it (a table's
+    cutoff). Whole weeks, so no tick after the cutoff can reach a boundary."""
     digits = point_digits(instrument)
     observations: list[Observation] = []
     mismatches: list[tuple[datetime, int, int | None]] = []
@@ -204,6 +210,8 @@ def build(
     data_from = DATA_FROM.get(instrument)
     for start, end in sampled_weeks(instrument):
         if data_from and end <= data_from:
+            continue
+        if until is not None and end > until:
             continue
         ticks = load_week_ticks(instrument, start, end, digits, with_prices=keep_ticks)
         if keep_ticks:
@@ -812,10 +820,105 @@ def full_run() -> int:
     return 0
 
 
+# --- producing a fitted table for the cost model -------------------------------
+
+PROFILE_YAML = Path(__file__).resolve().parent / "config" / "cost_ftmo_demo.yaml"
+TABLES = Path("C:/trading/data/derived/spread_correction/ftmo-demo")
+
+
+def _week_start(t: datetime) -> datetime:
+    """The Sunday 00:00 UTC that opens the sampled week containing `t`."""
+    day = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day - timedelta(days=(day.weekday() + 1) % 7)
+
+
+def fit_table_file(fit_until: datetime) -> int:
+    """Fit every instrument the profile corrects, on whole sampled weeks ending
+    at or before `fit_until`, and write the table the cost model reads."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the FTMO profile warns: placeholders
+        profile = load_cost_profile(PROFILE_YAML)
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    dirty = bool(
+        subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    )
+    instruments: dict = {}
+    digests = []
+    servers = set()
+    for inst, costs in profile.instruments.items():
+        method = costs.spread_correction
+        if method is None:
+            continue
+        if method.percentile != PERCENTILE:
+            raise ValueError(f"{inst}: profile percentile {method.percentile} != {PERCENTILE}")
+        data, _ = build(inst, until=fit_until)
+        measured = data.bars - data.bars_without_ticks
+        if measured == 0:
+            raise ValueError(f"{inst}: no measured bars before {fit_until:%Y-%m-%d}")
+        if not integrity_ok(len(data.minimum_mismatches), measured):
+            raise ValueError(
+                f"{inst}: data check fails ({len(data.minimum_mismatches)} of "
+                f"{measured} bars disagree); not fitted"
+            )
+        values, fallbacks = fit_entry(
+            _by_hour(data.observations),
+            _bars_by_hour(data.observations),
+            method.form,
+            method.structure,
+        )
+        weeks = len({_week_start(o.bar_open) for o in data.observations})
+        instruments[inst] = {
+            "form": method.form,
+            "structure": method.structure,
+            "percentile": method.percentile,
+            "weeks": weeks,
+            "corrections": {h: str(values[h]) for h in sorted(values)},
+        }
+        manifest = json.loads(
+            (DATA / inst / "ticks_monthly" / "manifest.json").read_text(encoding="utf-8")
+        )
+        servers.add(manifest["source_server"])
+        digests.append(f"{inst}:{files_digest(input_files(inst))}")
+        print(
+            f"{inst}: {weeks} weeks, {len(data.observations):,} observations, "
+            f"{method.form}/{method.structure}, fallback hours {sorted(fallbacks) or 'none'}"
+        )
+    if len(servers) != 1:
+        raise ValueError(f"tick samples come from more than one server: {sorted(servers)}")
+    table = SpreadCorrectionTable.model_validate(
+        {
+            "fit_until": fit_until,
+            "fitted_at": datetime.now(UTC).replace(microsecond=0),
+            "source_server": servers.pop(),
+            "provenance": {
+                "commit": commit + (" (uncommitted changes)" if dirty else ""),
+                "script": "fit_spread_correction.py --fit-until",
+                "sample": "monthly tick sample, whole weeks ending at or before fit_until",
+                "inputs_sha256": "; ".join(digests),
+                "gap_minutes": str(GAP_US // 60_000_000),
+                "min_fit_bars_per_hour": str(MIN_FIT_BARS),
+            },
+            "instruments": instruments,
+        }
+    )
+    TABLES.mkdir(parents=True, exist_ok=True)
+    out = TABLES / f"fit_until_{fit_until:%Y-%m-%d}.json"
+    out.write_text(table.model_dump_json(indent=1) + "\n", encoding="utf-8", newline="\n")
+    print(f"Written {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="3c.2 spread correction: fit and validation.")
     parser.add_argument("--handcheck", action="store_true")
+    parser.add_argument("--fit-until", help="write a fitted table: YYYY-MM-DD, 00:00 UTC")
     args = parser.parse_args(argv)
+    if args.fit_until:
+        return fit_table_file(datetime.fromisoformat(args.fit_until).replace(tzinfo=UTC))
     return handcheck() if args.handcheck else full_run()
 
 

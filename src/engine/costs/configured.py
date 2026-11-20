@@ -56,7 +56,9 @@ from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import Position
 from engine.core.types import Bar, Order
 from engine.costs.base import BookSnapshot
+from engine.costs.correction_table import SpreadCorrectionTable
 from engine.costs.profile import CostProfile, InstrumentCosts, ServerClockConfig, SwapRates
+from engine.costs.spread_correction import charged_points
 
 _TWO = Decimal(2)
 
@@ -93,11 +95,54 @@ class ConfiguredCostModel:
     the model can perfectly well hold.
     """
 
-    def __init__(self, profile: CostProfile, instruments: Mapping[str, InstrumentSpec]) -> None:
+    def __init__(
+        self,
+        profile: CostProfile,
+        instruments: Mapping[str, InstrumentSpec],
+        correction_table: SpreadCorrectionTable | None = None,
+    ) -> None:
         self._profile = profile
+        self._table = correction_table
         self._instruments = dict(instruments)
         self._clock = build_server_clock(profile.server_clock)
         self._check_currencies()
+        self._check_corrections()
+
+    def _check_corrections(self) -> None:
+        """Every instrument whose profile names a spread-correction method
+        must have a fitted table entry that agrees with it, fitted on enough
+        sampled weeks, and a server clock to find the hour by. Checked once,
+        at construction, so a misconfiguration stops the run before its
+        first bar rather than mid-way (phase 3c.2, approved 2026-11-20)."""
+        for symbol, costs in self._profile.instruments.items():
+            method = costs.spread_correction
+            if method is None:
+                continue
+            if self._table is None:
+                raise ValueError(
+                    f"{symbol}'s cost profile corrects its spread, so the cost model "
+                    "needs a spread-correction table; none was given"
+                )
+            if self._clock is None:
+                raise ValueError(
+                    f"{symbol}'s spread correction is by server hour, so the profile "
+                    "needs a server clock"
+                )
+            entry = self._table.instruments.get(symbol)
+            if entry is None:
+                raise ValueError(f"the spread-correction table has no entry for {symbol}")
+            fitted = (entry.form, entry.structure, entry.percentile)
+            wanted = (method.form, method.structure, method.percentile)
+            if fitted != wanted:
+                raise ValueError(
+                    f"{symbol}: the table was fitted as {fitted}, which does not match "
+                    f"the profile's method {wanted}"
+                )
+            if entry.weeks < method.min_fit_weeks:
+                raise ValueError(
+                    f"{symbol}: the table was fitted on {entry.weeks} sampled weeks; the "
+                    f"profile requires at least {method.min_fit_weeks}"
+                )
 
     def _check_currencies(self) -> None:
         """Every money figure this model produces is in the account
@@ -145,9 +190,9 @@ class ConfiguredCostModel:
         """
         costs = self._costs_for(bar.symbol)
         if bar.spread > 0:
-            return bar.spread
+            return self._corrected(bar, bar.spread)
         if any(window.contains(bar.ts_open.date()) for window in costs.zero_spread_genuine):
-            return Decimal(0)
+            return self._corrected(bar, Decimal(0))
         if costs.fallback_spread is None:
             raise ValueError(
                 f"{bar.symbol} has a zero spread at {bar.ts_open.isoformat()}, which is "
@@ -155,7 +200,41 @@ class ConfiguredCostModel:
                 "Either set fallback_spread, or declare this date genuine via "
                 "zero_spread_genuine -- missing data must not make a trade free"
             )
+        # A fallback is a placeholder, so no measured correction is added to
+        # it: that would claim a precision an invented number does not have.
         return costs.fallback_spread
+
+    def _corrected(self, bar: Bar, minimum: Decimal) -> Decimal:
+        """The measured minimum with the 3c.2 correction applied: max(minimum,
+        minimum with the correction) for the server hour of the bar's open,
+        rounded up to a whole point. Unchanged if the profile names no method.
+
+        Refuses a bar opening before the table's cutoff: the table was fitted
+        on data up to then, so applying it earlier would let a backtest's
+        costs see its own future.
+        """
+        method = self._costs_for(bar.symbol).spread_correction
+        if method is None:
+            return minimum
+        # Both checked at construction, in _check_corrections.
+        assert self._table is not None
+        assert self._clock is not None
+        if bar.ts_open < self._table.fit_until:
+            raise ValueError(
+                f"{bar.symbol} bar at {bar.ts_open.isoformat()} opens before the table's "
+                f"cutoff {self._table.fit_until.isoformat()}: the correction was fitted on "
+                "data up to then, so it cannot cost a bar from that period"
+            )
+        point = self._spec_for(bar.symbol).point
+        points = minimum / point
+        if points != points.to_integral_value():
+            raise ValueError(
+                f"{bar.symbol} spread {minimum} at {bar.ts_open.isoformat()} is not a whole "
+                f"number of points of {point}"
+            )
+        entry = self._table.instruments[bar.symbol]
+        hour = self._clock.to_server_naive(bar.ts_open).hour
+        return Decimal(charged_points(int(points), entry.value(hour), entry.form)) * point
 
     def executable_price(
         self,

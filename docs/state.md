@@ -1,9 +1,44 @@
 # Current State
 
-**Last session:** 2026-11-19 (proposal (c) applied); before that 2026-11-17
-**Phase:** 3 in progress. 3a (spread, commission) complete 2026-10-01; 3b (financing)
-complete 2026-10-02. **3c is next** (slippage, the C.1 spread model, a real sizer).
-Phase 2 complete 2026-09-30.
+**Last session:** 2026-11-20 (3c.2: tick sample, correction fitted and validated,
+wiring built); before that 2026-11-19
+**Phase:** 3 in progress. 3a complete 2026-10-01; 3b complete 2026-10-02; 3c.0 and
+3c.1 complete 2026-11-19. **3c.2 (the spread correction) is in progress: wiring built
+and tested, golden figures pending.** Phase 2 complete 2026-09-30.
+
+## RESUME HERE (end of session 2026-11-20)
+
+The working tree was committed as work in progress. **Two golden tests fail by design
+until the operator's figures are in:**
+`test_spread_correction_vs_hand_figures.py::...[long]` and `[short]`. Everything else
+passes. In order:
+
+1. **Operator: hand figures** for `tests/golden/test_spread_correction_vs_hand_figures.py`
+   (long and short). Every input is in its module docstring: the rules, the hand-made
+   table, and the fill and last bars. Replace `expected_pnl=None` in each case.
+2. **Then the held breaks**, each with its predicted move written first, using the
+   hardened harness (no bytecode, `__pycache__` cleared after each restore, both suites
+   from a clean cache after):
+   - the European DST calendar;
+   - **the bar's close hour instead of its open hour** (approved 2026-11-20 as the
+     substitute for "the deciding bar's hour", which the cost model cannot see);
+   - the negative-correction floor removed;
+   - percentage rounding toward the trader;
+   - the correction applied to a fallback spread;
+   - a table whose cutoff is after the bar not refused.
+
+   All match → 3c.2's exit criterion is met → commit.
+3. **Before deciding XAGUSD's earliest start: a read-only check of why its bars
+   disagree with the ticks in 2022-2023.** Either the stored spread is below every tick
+   in the bar (the extracted ticks are missing some the bar was built from), or the bars
+   themselves are wrong. Today, XAGUSD fails the 1% data check at every cutoff before
+   the week of 2024-06-09, so under the current rules its earliest table, and earliest
+   backtest, is about mid-2024. Applying the data check at fitting time was Claude's
+   addition, not yet confirmed by the operator. Details under 3c.2, "Wiring built".
+4. **EURUSD's 12-week minimum is reached around January 2023** (its data starts in
+   2022); the others' around October 2022.
+
+Then 3c.3 (the sizer), 3c.4 (the phase 3 exit), and the rest of Next below.
 
 ## Session 2026-11-17 in brief
 
@@ -41,7 +76,7 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
    Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"). **3c.0
    complete 2026-11-19** (bar spread = minimum; spread-table method decided). **3c.1
    complete 2026-11-19** (slippage; see "3c.1 slippage — COMPLETE"). **3c.2, the
-   statistical spread model, is next.**
+   statistical spread model, is in progress**: see "RESUME HERE" above.
 2. **Position conventions:** netting and hedging, before phase 4.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
@@ -1289,6 +1324,68 @@ tick history; not investigated.
       guard is in Next.
       **Consequence for phase 5: about five years of trustworthy cost history,
       growing monthly.**
+    - **Wiring the correction into the cost model: APPROVED 2026-11-20, all seven
+      points as proposed.**
+      1. **The correction values are a fitted file**, produced by a fitting command
+         for a stated cutoff ("fit until"), with provenance. It lives outside the repo,
+         and its hash goes in the run manifest. **The engine refuses to cost any bar
+         that opens before the table's cutoff.**
+      2. **The method is fixed in the cost profile per instrument:** NAS100 and EURUSD
+         points per hour; US500 and XAUUSD points constant; XAGUSD percentage
+         constant. All at the 90th percentile, nearest rank. The table must agree
+         with the profile's method, or the engine refuses it.
+      3. **Minimum fit sample: 12 sampled weeks per instrument**, enforced by refusal.
+         The earliest backtest start is therefore about October 2022 for the
+         non-FX instruments, and the window is about four years, growing monthly.
+      4. **Percentage charges are rounded up to a whole point**, against the trader.
+      5. **No correction on fallback spreads.**
+      6. **EURUSD zeros are genuine from 2022-01-01** (`zero_spread_genuine`,
+         open-ended), so they get the hour's correction instead of the 7-point
+         fallback.
+      7. **Golden test:** both reference strategies, hand figures first, on a March
+         US/EU DST-divergence week, with a hand-made test table. Breaks are held
+         until the operator's figures are in.
+      **Also decided:** the table used for **live trading** carries provenance and
+      **warns when its data is more than 60 days old**, like the swap staleness
+      check. Built in this step (small). Calling it from the live wiring is in Next.
+    - **Wiring built, 2026-11-20 (uncommitted, awaiting the operator's hand
+      figures).**
+      - The pure rules moved into `src/engine/costs/spread_correction.py` (git mv).
+      - New: `engine.costs.correction_table` (the table file, exact values, all 24
+        hours, UTC cutoff, the 60-day staleness warning) and `SpreadCorrectionMethod`
+        in the profile. `ConfiguredCostModel` takes the table and applies it inside
+        `resolved_spread`, so fills, valuation and slippage all see it. `DateRange`
+        may now be open-ended. The FTMO profile carries the five methods and EURUSD's
+        genuine zeros from 2022-01-01.
+      - `fit_spread_correction.py --fit-until YYYY-MM-DD` writes a table to
+        `C:\trading\data\derived\spread_correction\ftmo-demo\`, using whole sampled
+        weeks ending at or before the cutoff.
+      - **Tests:** 36 new tests failed first for the intended reason; 11 others first
+        failed on a mistake in my test helpers (a missing `Bar.is_final` and missing
+        `Order` fields), fixed before any code was written. Four passed before any
+        code existed, because a stub that ignores the table already gets them right:
+        negative floor, fallback not corrected, no method, unknown keys. The first two
+        are held breaks. `test_the_ftmo_profile_declares_no_zero_spread_as_genuine`
+        was replaced, because the decision it recorded changed.
+      - **Golden inputs:** fixture `xauusd_m15_2025-03-12T2045_2025-03-19.csv` (its
+        generator reproduces the 3c.1 fixture byte for byte), test profile
+        `cost_test_profile_correction.yaml`, hand-made `spread_correction_test_table.json`.
+        **Incident:** the fixture guard first found that, with hour 1 at +12, buy
+        rounding against the trader equalled rounding to nearest. Its assertion
+        message printed the raw buy price for that version of the table. Hour 1 was
+        changed to +11, so the printed number is not the answer, and the guard now
+        fails with a message only (shown failing on +12 without printing an amount).
+      - **Real-data fits:** a table fitted until 2026-11-01 is accepted by the cost
+        model (58-61 weeks per instrument; NAS100 hour 0 falls back, a closed hour).
+      - **FINDING, for the operator: XAGUSD fails the data check (more than 1% of
+        bars disagree) at every cutoff before the week of 2024-06-09.** Its weekly
+        disagreements run at about 1-2% through 2022-2023, so the cumulative share
+        first falls to 1% in mid-2024. Under the current rules, the earliest XAGUSD
+        table, and so the earliest XAGUSD backtest, is about mid-2024. Applying the
+        data check when fitting a table was my addition, as a safeguard; the operator
+        approved it for the validation runs, not explicitly for fitting.
+      - **EURUSD reaches 12 weeks (from 2022) only around January 2023**, so its
+        earliest backtest is about then; the others' is about October 2022.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
 (operator-checked); the EURUSD zero-spread evidence is recorded and its treatment
@@ -1402,6 +1499,18 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
   explicit override allows earlier starts **for exploratory runs only, and stamps
   their results "costs unverified"**. It works the way `bars_genuine_from` refuses
   non-genuine bars. See the 3c.2 decision on verified cost history.
+
+- **Live wiring must call the spread-correction table's staleness check** (60 days;
+  added 2026-11-20). The check exists from 3c.2. Nothing live exists yet to call it.
+
+## Phase 5 notes
+
+- **Rolling refit of the spread correction** (operator, 2026-11-20). A table frozen
+  for a multi-year backtest grows stale: gold's spreads roughly tripled from 2022 to
+  2026. Refitting, for example quarterly, with each table fitted only on data before
+  its quarter, is equally causal and more faithful. Design it in phase 5, not now. The
+  3c.2 cutoff refusal already allows it: each quarter's bars are costed by a table
+  whose cutoff is at or before that quarter's start.
 
 ## Carried-forward gaps (not blocking)
 

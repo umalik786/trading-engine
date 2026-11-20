@@ -10,7 +10,8 @@ Units throughout: times are whole microseconds since the epoch, spreads whole
 points. Percentages are exact fractions. Nothing here uses floating point, so
 the same inputs always give the same table, to the last digit.
 
-Analysis tooling, not engine code: the engine imports nothing from here.
+Used by the cost model (applying a fitted table) and by the fitting tool
+(fit_spread_correction.py, producing one). Moved into the package 2026-11-20.
 """
 
 from __future__ import annotations
@@ -271,3 +272,38 @@ def mean_overcharge(
     if n == 0:
         raise ValueError("no observations to average")
     return total / n
+
+
+def charged_points(minimum: int, correction: int | Fraction, form: str) -> int:
+    """The charged spread in WHOLE points: the exact charge, rounded UP --
+    against the trader -- when a percentage makes it fractional."""
+    exact = Fraction(charge(minimum, correction, form))
+    return -(-exact.numerator // exact.denominator)  # ceiling, in whole numbers
+
+
+HOURS = range(24)
+
+
+def fit_entry(
+    cells: Mapping[int, Sequence[tuple[int, int]]],
+    bar_counts: Mapping[int, int],
+    form: str,
+    structure: str,
+) -> tuple[dict[int, int | Fraction], set[int]]:
+    """A correction for EVERY server hour 0-23, and the hours that fell back.
+
+    `per_hour`: fit_table over all 24 hours; an hour with no data or too few
+    bars takes the instrument-wide value. `constant`: the instrument-wide value
+    everywhere, with no fallbacks (none is needed).
+    """
+    if structure == "per_hour":
+        return fit_table(
+            {h: cells.get(h, []) for h in HOURS}, {h: bar_counts.get(h, 0) for h in HOURS}, form
+        )
+    if structure == "constant":
+        pooled = [obs for hour in sorted(cells) for obs in cells[hour]]
+        value = fit_correction(pooled, form)
+        if value is None:
+            raise ValueError(f"nothing to fit for the {form} form")
+        return dict.fromkeys(HOURS, value), set()
+    raise ValueError(f"unknown correction structure {structure!r}")

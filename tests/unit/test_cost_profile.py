@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from engine.costs.profile import CostProfile, DateRange, load_cost_profile
+from engine.costs.profile import (
+    CostProfile,
+    DateRange,
+    SpreadCorrectionMethod,
+    load_cost_profile,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FTMO_PROFILE = REPO_ROOT / "config" / "cost_ftmo_demo.yaml"
@@ -34,13 +39,40 @@ class TestShippedProfiles:
 
         assert set(profile.instruments) == {"NAS100", "US500", "EURUSD", "XAUUSD", "XAGUSD"}
 
-    def test_the_ftmo_profile_declares_no_zero_spread_as_genuine(self) -> None:
-        """The pessimistic default: with no ranges declared, every zero
-        spread in the stored history is treated as missing data."""
+    def test_only_eurusd_declares_zero_spreads_genuine_from_2022(self) -> None:
+        """Decided 2026-11-20 (3c.2 wiring, point 6): EURUSD's zeros from
+        2022-01-01 are verified against ticks, so they are genuine, open-ended.
+        Every other zero in the stored history stays missing data."""
         with pytest.warns(UserWarning, match="verification is incomplete"):
             profile = load_cost_profile(FTMO_PROFILE)
 
-        assert all(not costs.zero_spread_genuine for costs in profile.instruments.values())
+        eurusd = profile.instruments["EURUSD"].zero_spread_genuine
+        assert len(eurusd) == 1
+        assert eurusd[0].from_date == date(2022, 1, 1)
+        assert eurusd[0].to_date is None
+        assert eurusd[0].contains(date(2099, 1, 1))
+        assert not eurusd[0].contains(date(2021, 12, 31))
+        others = [c for s, c in profile.instruments.items() if s != "EURUSD"]
+        assert all(not costs.zero_spread_genuine for costs in others)
+
+    def test_the_ftmo_profile_carries_the_validated_correction_methods(self) -> None:
+        """As approved 2026-11-20 from the 3c.2 validation."""
+        with pytest.warns(UserWarning, match="verification is incomplete"):
+            profile = load_cost_profile(FTMO_PROFILE)
+
+        expected = {
+            "NAS100": ("points", "per_hour"),
+            "EURUSD": ("points", "per_hour"),
+            "US500": ("points", "constant"),
+            "XAUUSD": ("points", "constant"),
+            "XAGUSD": ("percentage", "constant"),
+        }
+        for symbol, (form, structure) in expected.items():
+            method = profile.instruments[symbol].spread_correction
+            assert method is not None, symbol
+            assert (method.form, method.structure) == (form, structure), symbol
+            assert method.percentile == 90
+            assert method.min_fit_weeks == 12
 
     def test_the_test_profile_is_the_one_the_golden_tests_describe(self) -> None:
         with pytest.warns(UserWarning, match="verification is incomplete"):
@@ -210,9 +242,7 @@ class TestValidation:
         with pytest.raises(ValidationError, match="shape"):
             CostProfile.model_validate(
                 self._profile(
-                    instruments={
-                        "XAUUSD": {"commission": {"shape": "per_trade", "value": "1.00"}}
-                    }
+                    instruments={"XAUUSD": {"commission": {"shape": "per_trade", "value": "1.00"}}}
                 )
             )
 
@@ -322,3 +352,37 @@ class TestValidation:
         profile = CostProfile.model_validate(self._profile())
 
         assert profile.instruments["XAUUSD"].fallback_spread is None
+
+
+class TestSpreadCorrectionMethod:
+    def _method(self, **change):
+        raw = {
+            "form": "points",
+            "structure": "constant",
+            "percentile": 90,
+            "min_fit_weeks": 12,
+            "source": "x",
+        } | change
+        return SpreadCorrectionMethod.model_validate(raw)
+
+    @pytest.mark.parametrize("pct", [0, 101])
+    def test_percentile_must_be_1_to_100(self, pct) -> None:
+        with pytest.raises(ValidationError):
+            self._method(percentile=pct)
+
+    def test_min_fit_weeks_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError):
+            self._method(min_fit_weeks=0)
+
+    def test_source_must_not_be_empty(self) -> None:
+        with pytest.raises(ValidationError):
+            self._method(source="")
+
+
+class TestOpenEndedDateRange:
+    def test_a_range_with_no_end_runs_on(self) -> None:
+        r = DateRange.model_validate({"from": "2022-01-01"})
+        assert r.to_date is None
+        assert r.contains(date(2022, 1, 1))
+        assert r.contains(date(2099, 12, 31))
+        assert not r.contains(date(2021, 12, 31))

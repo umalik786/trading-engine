@@ -9,21 +9,18 @@ analysis script feeds in.
 from __future__ import annotations
 
 from fractions import Fraction
-from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[2]
+from engine.costs import spread_correction
+
 S = 1_000_000  # one second in microseconds
 MIN = 60 * S
 B = 1_000_000 * S  # an arbitrary boundary instant
 
 
 @pytest.fixture
-def sc(monkeypatch):
-    monkeypatch.syspath_prepend(str(REPO))
-    import spread_correction  # noqa: PLC0415 -- needs REPO on sys.path first
-
+def sc():
     return spread_correction
 
 
@@ -408,3 +405,42 @@ def test_coverage_range_is_best_minus_worst(sc):
 def test_coverage_range_needs_two_years(sc):
     with pytest.raises(ValueError, match="at least two"):
         sc.coverage_range([(90, 100)])
+
+
+# --- applying a table (3c.2 wiring, approved 2026-11-20) -----------------------
+
+
+def test_charged_points_rounds_a_percentage_charge_up(sc):
+    # 31 x 4/3 = 41.33... -> 42. 30 x 4/3 = 40 exactly -> 40.
+    assert sc.charged_points(31, Fraction(1, 3), "percentage") == 42
+    assert sc.charged_points(30, Fraction(1, 3), "percentage") == 40
+
+
+def test_charged_points_for_points_form(sc):
+    assert sc.charged_points(5, 2, "points") == 7
+    assert sc.charged_points(5, -3, "points") == 5
+
+
+# --- assembling a fitted entry over all 24 hours ------------------------------
+
+
+def test_fit_entry_per_hour_covers_every_hour_with_fallback(sc):
+    # Only hour 3 has data (200 bars): 400 obs at +1 -> +1 for hour 3 and,
+    # as the instrument-wide value, for the other 23 hours (fallbacks).
+    values, fallbacks = sc.fit_entry({3: _obs(400, 5, 1)}, {3: 200}, "points", "per_hour")
+    assert values == dict.fromkeys(range(24), 1)
+    assert fallbacks == set(range(24)) - {3}
+
+
+def test_fit_entry_constant_uses_the_pooled_value_everywhere(sc):
+    # Pooled: 360 at +1, 40 at +9 (hour 3) and 400 at +2 (hour 4) = 800;
+    # rank 720: sorted 360 ones then 400 twos -> +2. Same in all 24 hours.
+    cells = {3: _obs(360, 5, 1) + _obs(40, 5, 9), 4: _obs(400, 5, 2)}
+    values, fallbacks = sc.fit_entry(cells, {3: 200, 4: 200}, "points", "constant")
+    assert values == dict.fromkeys(range(24), 2)
+    assert fallbacks == set()
+
+
+def test_fit_entry_refuses_an_unknown_structure(sc):
+    with pytest.raises(ValueError, match="structure"):
+        sc.fit_entry({3: _obs(400, 5, 1)}, {3: 200}, "points", "weekly")

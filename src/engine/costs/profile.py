@@ -40,9 +40,7 @@ from engine.core.provenance import DEFAULT_STALE_AFTER_DAYS, warn_if_unverified_
 
 CommissionShape = Literal["per_lot_per_side", "per_lot_round_turn", "pct_notional"]
 SwapShape = Literal["points", "currency_per_lot", "disabled"]
-Weekday = Literal[
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
-]
+Weekday = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 # Swap rates are revised by brokers far more often than rulebooks change.
 FINANCING_STALE_AFTER_DAYS = 30
@@ -77,6 +75,9 @@ class Provenance(BaseModel):
 
 class DateRange(BaseModel):
     """An inclusive range of UTC dates, compared against a bar's open date.
+    With no `to`, the range is open-ended: it runs on from `from`. That is for
+    a claim that holds from a date onwards (EURUSD's genuine zeros from 2022),
+    where any end date would be invented and would silently expire.
 
     `from` is a Python keyword, so the field is `from_date` with `from` as
     its config alias -- the YAML reads naturally and the Python is legal.
@@ -85,16 +86,16 @@ class DateRange(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     from_date: date = Field(alias="from")
-    to_date: date = Field(alias="to")
+    to_date: date | None = Field(default=None, alias="to")
 
     @model_validator(mode="after")
     def _ordered(self) -> DateRange:
-        if self.to_date < self.from_date:
+        if self.to_date is not None and self.to_date < self.from_date:
             raise ValueError(f"range end {self.to_date} is before its start {self.from_date}")
         return self
 
     def contains(self, day: date) -> bool:
-        return self.from_date <= day <= self.to_date
+        return self.from_date <= day and (self.to_date is None or day <= self.to_date)
 
 
 class ServerClockConfig(BaseModel):
@@ -214,6 +215,31 @@ class Slippage(BaseModel):
     value: Decimal = Field(ge=0)
 
 
+class SpreadCorrectionMethod(BaseModel):
+    """How the 3c.2 spread correction is applied for one instrument.
+
+    The METHOD lives here, in the profile; the fitted VALUES live in a
+    separate table file (engine.costs.correction_table), refitted for each
+    cutoff. The cost model refuses a table whose method disagrees with this.
+
+    - `form` -- `points` adds the correction to the bar minimum; `percentage`
+      scales the minimum by (1 + correction).
+    - `structure` -- `per_hour` (one value per server hour) or `constant`.
+    - `percentile` -- the nearest-rank percentile the values were fitted at.
+    - `min_fit_weeks` -- the fewest sampled weeks a table may be fitted on.
+    - `source` -- where the method was decided (required: a method with no
+      reason is a guess).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    form: Literal["points", "percentage"]
+    structure: Literal["per_hour", "constant"]
+    percentile: int = Field(ge=1, le=100)
+    min_fit_weeks: int = Field(ge=1)
+    source: str = Field(min_length=1)
+
+
 class InstrumentCosts(BaseModel):
     # Unknown keys are refused rather than ignored: a key left over from an
     # older schema -- `slippage_price_units`, say -- would otherwise load
@@ -239,6 +265,8 @@ class InstrumentCosts(BaseModel):
     # `ConfiguredCostModel.resolved_spread` for why the default is that
     # every zero is missing.
     zero_spread_genuine: list[DateRange] = Field(default_factory=list)
+
+    spread_correction: SpreadCorrectionMethod | None = None
 
 
 class CostProfile(BaseModel):

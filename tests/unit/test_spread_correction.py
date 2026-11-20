@@ -264,7 +264,33 @@ def test_instrument_with_no_judged_cells_cannot_be_judged(sc):
         sc.instrument_passes(0, 0, 90, 100)
 
 
+# --- mean over-charge (definition 4, amended after results 2026-11-20) --------
+
+
+def test_mean_overcharge_pools_every_observation(sc):
+    # Hour 1, +2 points: charges 7 and 7 against 7 and 8 -> 0 and -1.
+    # Hour 2, +0: charge 4 against 1 -> +3.
+    # Mean over all three: (0 - 1 + 3) / 3 = 2/3. Undercharges count negative.
+    obs = {1: [(7, 5), (8, 5)], 2: [(1, 4)]}
+    assert sc.mean_overcharge(obs, {1: 2, 2: 0}, "points") == Fraction(2, 3)
+
+
+def test_mean_overcharge_percentage_is_exact(sc):
+    # 10 * (1 + 1/2) = 15 against 10 -> 5; 3 * (1 + 1/2) = 9/2 against 4 -> 1/2.
+    # Mean (5 + 1/2) / 2 = 11/4.
+    obs = {0: [(10, 10), (4, 3)]}
+    assert sc.mean_overcharge(obs, {0: Fraction(1, 2)}, "percentage") == Fraction(11, 4)
+
+
+def test_mean_overcharge_of_nothing_is_refused(sc):
+    with pytest.raises(ValueError, match="no observations"):
+        sc.mean_overcharge({}, {}, "points")
+
+
 # --- choosing the form --------------------------------------------------------
+# Amended 2026-11-20, after results: when both pass, the LOWER MEAN OVER-CHARGE
+# on the test period wins (points on a tie). The logic is unchanged from the
+# drift rule; what is compared is not.
 
 
 def test_choose_form(sc):

@@ -1195,6 +1195,73 @@ tick history; not investigated.
         63.67%, US500 78.55%). Those three weeks are below 200 bars in every hour, so
         they use the 2021 instrument-wide value, which is evidently 0. Not checked
         further.
+      - Committed exactly as produced in b4c35a5, with the verbatim report at
+        `docs/results/3c2_validation_preregistered_2026-11-20.txt`.
+    - **DECISIONS MADE AFTER SEEING THE RESULTS, 2026-11-20 (operator).** Recorded as
+      such: the test period informed them.
+      1. **EURUSD is fitted from 2022**, like the other four, under the same criteria,
+         including the data check (applied to bars from 2022-01-01 only). Its counted
+         drift years become 2022-2024. Data-quality finding below.
+      2. **Definition 4 amended: when both forms pass, the one with the lower mean
+         over-charge on the test period is chosen** (points on a tie). Mean
+         over-charge is the mean of (charged − actual spread) over every test
+         observation, using the per-hour table, with undercharges counted negative.
+         Applied to every instrument. **Why:** the criteria guarded only against
+         undercharging, and drift measured by coverage saturates near 100%, so a
+         heavily overcharging form looked stable (XAUUSD percentage, 99.35%).
+         **Overcharging is not safe: it hides real edges.** Drift is still reported.
+         **Amended rerun, 2026-11-20** (`validation_fit_to_2024_amended.txt`). The
+         figures for NAS100, US500, XAUUSD and XAGUSD are identical to the
+         pre-registered run; only the choice of form moved, for XAUUSD. The hand check
+         still agrees.
+
+         | | No correction | Points: verdict, coverage, failed cells, mean over-charge | Percentage | Per-hour table beats constant? | Chosen |
+         |---|---|---|---|---|---|
+         | NAS100 | 63.67% | PASS, 97.88%, 0, 35.80 pts | PASS, 97.66%, 0, 47.83 | yes | points |
+         | US500 | 78.55% | PASS, 97.93%, 0, 14.58 | PASS, 97.11%, 0, 20.63 | no | points |
+         | EURUSD (from 2022) | 43.79% | PASS, 93.38%, 0 of 24, 2.73 | **FAIL**, 67.24%, 22 of 24, 4.98 | yes | points |
+         | XAUUSD | 23.49% | PASS, 97.69%, 1 (hour 23), 9.40 | PASS, 99.35%, 0, 59.27 | no | **points** (was percentage) |
+         | XAGUSD | 22.71% | **FAIL**, 69.40%, 23, −2.09 | PASS, 95.53%, 0, 15.33 | no | percentage |
+
+         EURUSD from 2022: 74 of 27,629 measured bars disagree (0.27%), so it passes
+         the data check; 7 bars are unmeasurable. Its percentage form fails on the
+         zero minimums, the structural weakness predicted in the proposal: any
+         percentage of zero is zero.
+         **Known weak cell: XAUUSD server hour 23, points form, 83.70% test coverage**
+         (the hour before the daily break). It is the only failing cell among the
+         chosen forms. Its instrument passes overall, so the cell is recorded, not
+         acted on. It is the first place to look if XAUUSD costs prove too low.
+      3. **These choices need confirming on fresh data**: the monthly sample weeks from
+         November 2026 onward, which no decision has seen. Until then, the 2025-2026
+         test period has informed the method and is no longer a clean out-of-sample
+         test of it.
+    - **DATA-QUALITY FINDING: EURUSD's stored bar spreads, 2005-2021, are not
+      trustworthy as a measured history** (read-only examination, 2026-11-20, M15).
+      Only 2020-2021 can be checked against ticks, and there they are wrong. Before
+      2020 there is nothing to check them against, and most years look like settings
+      rather than measurements:
+
+      | Years | What the stored spread looks like |
+      |---|---|
+      | 2005-2008 | One value for the whole year: 30 (2005), then 20 (2006-2008). 100% of bars. |
+      | 2009 | 71% at 20, the rest 10-15: a transition. |
+      | 2010-2012 | Varied, median 10-12, p10-p90 about 6-15. Plausible, but unverifiable. |
+      | 2013-2014 | Median 2, many 1s; 4.7% zeros in 2014. Plausible, but unverifiable. |
+      | 2015-2017 | Mostly 7 (93% of 2016 bars); 23.8% zeros in 2017. Looks fixed. |
+      | 2018-2019 | Two values, 1 and 8. In 2019, 8 is the commonest value in every server hour but one. |
+      | May 2020-Sep 2021 | **50 points on 56-90% of each month's bars, in every hour.** FTMO's own ticks show minimums of 0 in the same bars. Demonstrably wrong. |
+      | Oct 2021-2024 | 2 on 93-96% of bars. Agrees with the ticks (data check passes from 2022). |
+      | 2025-2026 | Zeros rising: 26% (2025), 68% (2026). Genuine, per the 3c.0 tick evidence. |
+
+      **DECIDED 2026-11-20 (operator): EURUSD's stored spreads before 2022 are
+      recorded as untrustworthy:** fixed values in 2005-2008, fixed-looking values in
+      2015-2019, and demonstrably wrong values from May 2020 to September 2021. A guard
+      is added to Next.
+      **Consequence: any EURUSD backtest before 2022 rests on a spread series that is
+      either unverifiable or demonstrably wrong.** The 3c.2 correction, fitted from
+      2022, can't repair the bar minimum it is added to. How to cost pre-2022 EURUSD is
+      undecided. The options (a floor, an external spread history, or not backtesting
+      EURUSD before 2022) are for the operator.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
 (operator-checked); the EURUSD zero-spread evidence is recorded and its treatment
@@ -1291,6 +1358,22 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
     when it builds a feed. **Update `tests/properties/test_future_shuffle.py` at the
     same time — operator edit**: it constructs a ReplayFeed, and a required argument
     breaks it. Until then the guard holds only for callers that pass the date.
+
+- **FTMO commission is still a zero placeholder. Verify it from FTMO's own terms
+  before any FTMO backtest is believed** (added 2026-11-20). A zero commission
+  understates costs on every fill, in the same invisible way as the minimum spread
+  did.
+- **Orchestrator design: refuse to run when the data's source server doesn't match the
+  venue the cost profile was built for** (added 2026-11-20). Every extraction manifest
+  records `source_server` (e.g. FTMO-Demo). A cost profile measured on one venue,
+  applied to bars from another, gives plausible numbers that are wrong. The guard
+  compares the two at startup and stops on a mismatch.
+
+- **Refuse EURUSD backtests starting before 2022 by default** (added 2026-11-20), in
+  the same way `bars_genuine_from` refuses non-genuine bars, until a credible spread
+  source exists. Its stored spreads before 2022 are untrustworthy (see the 3c.2
+  data-quality finding). Configuration, not code: a per-instrument date in
+  `config/instruments.yaml`, so the date can move if a spread source is found.
 
 ## Carried-forward gaps (not blocking)
 

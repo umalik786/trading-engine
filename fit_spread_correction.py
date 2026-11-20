@@ -70,6 +70,7 @@ from spread_correction import (
     fit_table,
     integrity_ok,
     judge,
+    mean_overcharge,
     prefer_hourly,
     score,
 )
@@ -81,6 +82,11 @@ SERVER_CLOCK = DstSwitchedServerClock(timedelta(hours=2), timedelta(hours=3), "A
 TEST_FROM = datetime(2025, 1, 1, tzinfo=UTC)
 BAR = timedelta(minutes=15)
 _SUNDAY = 6  # date.weekday(): Monday 0 ... Sunday 6
+
+# Decided 2026-11-20 AFTER results: EURUSD's 2020-2021 bar spreads disagree with
+# FTMO's own ticks (stored 50 points where ticks show 0), so it is fitted, tested
+# and data-checked from 2022 only, like the other four. Bars before are skipped.
+DATA_FROM = {"EURUSD": datetime(2022, 1, 1, tzinfo=UTC)}
 
 HANDCHECK_INSTRUMENT, HANDCHECK_HOUR = "XAUUSD", 14
 # The operator's hand figures for that cell, worked before the fit ran (2026-11-20).
@@ -195,11 +201,16 @@ def build(
     n_bars = without_ticks = 0
     dropped: list[tuple[datetime, str]] = []
     week_ticks: dict[datetime, WeekTicks] = {}
+    data_from = DATA_FROM.get(instrument)
     for start, end in sampled_weeks(instrument):
+        if data_from and end <= data_from:
+            continue
         ticks = load_week_ticks(instrument, start, end, digits, with_prices=keep_ticks)
         if keep_ticks:
             week_ticks[start] = ticks
         for bar_open, stored in load_week_bars(instrument, start, end):
+            if data_from and bar_open < data_from:
+                continue
             n_bars += 1
             open_us = to_us(bar_open)
             from_ticks = bar_minimum(
@@ -393,7 +404,7 @@ def handcheck() -> int:
 
 INSTRUMENTS = ("NAS100", "US500", "EURUSD", "XAUUSD", "XAGUSD")
 # Definition 3: only full sampled years count towards drift. Others' 2021 is shown.
-FULL_YEARS = {"EURUSD": (2020, 2021, 2022, 2023, 2024)}
+FULL_YEARS: dict[str, tuple[int, ...]] = {}  # EURUSD from 2022, like the others
 DEFAULT_FULL_YEARS = (2022, 2023, 2024)
 SHOWN_ONLY_YEARS = {"EURUSD": ()}
 DEFAULT_SHOWN_ONLY_YEARS = (2021,)
@@ -622,7 +633,10 @@ def evaluate(inst: str, data: InstrumentData, out: list[str]) -> dict:  # noqa: 
         )
         if shown:
             say("  (* shown, not counted: not a full sampled year)")
+        overcharge = mean_overcharge(test_cells, table, form)
+        say(f"Mean over-charge, per-hour table, every test observation: {points2(overcharge)} pts")
         forms[form] = {
+            "mean_overcharge": str(overcharge),
             "verdict": _verdict_json(v),
             "cells": cells_json,
             "constant_correction": str(constant),
@@ -634,10 +648,13 @@ def evaluate(inst: str, data: InstrumentData, out: list[str]) -> dict:  # noqa: 
         }
 
     p_v, q_v = forms["points"]["verdict"], forms["percentage"]["verdict"]
-    p_d = Fraction(forms["points"]["drift_full_years"] or 0)
-    q_d = Fraction(forms["percentage"]["drift_full_years"] or 0)
-    chosen = choose_form(bool(p_v and p_v["passes"]), bool(q_v and q_v["passes"]), p_d, q_d)
-    say(f"\nFORM CHOSEN (definition 4): {chosen or 'NONE -- the instrument fails'}")
+    p_o = Fraction(forms["points"]["mean_overcharge"])
+    q_o = Fraction(forms["percentage"]["mean_overcharge"])
+    chosen = choose_form(bool(p_v and p_v["passes"]), bool(q_v and q_v["passes"]), p_o, q_o)
+    say(
+        f"\nFORM CHOSEN (definition 4, amended: lower mean over-charge): "
+        f"{chosen or 'NONE -- the instrument fails'}"
+    )
     record["forms"] = forms
     record["form_chosen"] = chosen
     return record
@@ -702,6 +719,40 @@ def files_digest(paths: list[Path]) -> str:
     return h.hexdigest()
 
 
+def summary(result: dict) -> list[str]:
+    """One line per instrument: the table the operator reads first."""
+    lines = [
+        "",
+        "=" * 78,
+        "SUMMARY",
+        "=" * 78,
+        f"{'':7} {'no corr.':>9} | {'points':^32} | {'percentage':^32} | chosen",
+    ]
+    for inst, rec in result["instruments"].items():
+        if rec.get("stopped"):
+            lines.append(f"{inst:7} STOPPED by the data check")
+            continue
+        cols = []
+        for form in FORMS:
+            f = rec["forms"][form]
+            v = f["verdict"]
+            earns = "hourly" if f["hourly_earns_its_place"] else "const"
+            cols.append(
+                f"{'PASS' if v['passes'] else 'FAIL'} {pct(*v['overall']):>7} "
+                f"f{len(v['failed']):<2} oc {points2(Fraction(f['mean_overcharge'])):>6} {earns}"
+            )
+        base = rec["baseline_no_correction"]
+        lines.append(
+            f"{inst:7} {pct(*base['overall']):>9} | {cols[0]:32} | {cols[1]:32} | "
+            f"{rec['form_chosen'] or 'NONE'}"
+        )
+    lines.append(
+        "f = failed judged cells; oc = mean over-charge, points, per-hour table; "
+        "hourly/const = whether the per-hour table beats one constant"
+    )
+    return lines
+
+
 def full_run() -> int:
     started = datetime.now(UTC)
     commit = subprocess.run(
@@ -719,6 +770,9 @@ def full_run() -> int:
         f"Percentile {PERCENTILE} nearest-rank; gap {GAP_US // 60_000_000} min; "
         f"thin fit cell < {MIN_FIT_BARS} bars; unjudged cell < {MIN_TEST_BARS} test bars",
         "This run validates the method; backtests re-fit on data before their start only.",
+        "AMENDED AFTER SEEING THE PRE-REGISTERED RESULTS (2026-11-20): EURUSD from 2022;",
+        "definition 4 chooses by lower mean over-charge. Needs confirming on fresh data",
+        "(sample weeks from November 2026). Pre-registered report: docs/results/.",
     ]
     result: dict = {
         "run_utc": started.isoformat(),
@@ -747,9 +801,10 @@ def full_run() -> int:
         result["instruments"][inst] = record
         del data
     OUT.mkdir(parents=True, exist_ok=True)
+    out.extend(summary(result))
     report = "\n".join(out) + "\n"
-    (OUT / "validation_fit_to_2024.txt").write_text(report, encoding="utf-8", newline="\n")
-    (OUT / "validation_fit_to_2024.json").write_text(
+    (OUT / "validation_fit_to_2024_amended.txt").write_text(report, encoding="utf-8", newline="\n")
+    (OUT / "validation_fit_to_2024_amended.json").write_text(
         json.dumps(result, indent=1, default=str), encoding="utf-8", newline="\n"
     )
     print(report)

@@ -167,12 +167,19 @@ def instrument_passes(cells_passed: int, cells_judged: int, n_covered: int, n: i
 
 
 def choose_form(
-    points_pass: bool, percent_pass: bool, points_range: Fraction, percent_range: Fraction
+    points_pass: bool, percent_pass: bool, points_overcharge: Fraction, percent_overcharge: Fraction
 ) -> Form | None:
     """The form for an instrument: the only one that passes; if both, the one
-    whose single-year fits drift less (points on a tie); if neither, None."""
+    with the lower mean over-charge on the test period (points on a tie); if
+    neither, None.
+
+    Amended 2026-11-20, AFTER results (docs/state.md): it compared drift, the
+    range of single-year coverage. The criteria guard only against undercharging,
+    and coverage saturates near 100%, so a heavily overcharging form looked
+    stable. Overcharging is not safe: it hides real edges.
+    """
     if points_pass and percent_pass:
-        return "percentage" if percent_range < points_range else "points"
+        return "percentage" if percent_overcharge < points_overcharge else "points"
     if points_pass:
         return "points"
     if percent_pass:
@@ -247,3 +254,20 @@ def coverage_range(scores: Sequence[tuple[int, int]]) -> Fraction:
         raise ValueError("a range needs at least two years")
     shares = [Fraction(c, n) for c, n in scores]
     return max(shares) - min(shares)
+
+
+def mean_overcharge(
+    observations: Mapping[int, Sequence[tuple[int, int]]],
+    table: Mapping[int, int | Fraction],
+    form: str,
+) -> Fraction:
+    """Mean of (charged - actual spread), in points, over every observation in
+    every hour. Undercharges count negative. Exact: no rounding."""
+    total, n = Fraction(0), 0
+    for hour, obs in observations.items():
+        for b, m in obs:
+            total += Fraction(charge(m, table[hour], form)) - b
+            n += 1
+    if n == 0:
+        raise ValueError("no observations to average")
+    return total / n

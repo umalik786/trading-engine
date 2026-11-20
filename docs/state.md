@@ -1054,6 +1054,147 @@ tick history; not investigated.
     `C:\trading\data\raw\<instrument>\ticks_monthly\`, separate from the 3c.0 sample in
     `ticks\`, which `analyse_spread_semantics.py` reads in full.
   - **Known limitation**, recorded under carried-forward gaps.
+  - **Fit and out-of-sample validation of the correction — APPROVED 2026-11-20, criteria
+    fixed before any result was seen.** Not adjusted after results.
+    - **Target:** the spread in force at a bar boundary, the moment a trade faces it.
+      That's the last tick at or before the boundary. **Operator change:** at a
+      boundary following a gap in quotes (no tick in the 5 minutes before it: session
+      opens, the indices' daily break, the Sunday open), use the **first tick at or
+      after** the boundary instead. The count of boundaries using this rule is
+      reported per cell.
+    - **Each M15 bar gives two observations, both against its stored minimum**,
+      because the engine charges that bar's spread at both
+      (`src/engine/costs/configured.py`): its **open** (a fill) and its **close**
+      (valuation). The cell is the instrument and the server hour of the bar's start
+      (+2/+3, US calendar).
+    - **Correction** = the 90th percentile, nearest rank (sort, take the value at rank
+      ⌈0.9·N⌉; no interpolation), of the boundary-minus-minimum differences
+      (**points**) or the boundary-over-minimum excesses (**percentage**). Charged
+      spread = max(bar minimum, bar minimum with the correction applied), so a
+      negative correction never charges below the minimum. A zero minimum gives no
+      percentage observation, and charges zero under the percentage form.
+    - **M15 only.** Fit: sampled weeks with bars before 2025-01-01 00:00 UTC. Test:
+      bars from 2025-01-01 to the October 2026 week. A cell with fewer than 200 fit
+      bars uses the instrument-wide correction and is reported as a fallback.
+    - **Pass/fail:**
+      - A cell fails if its test coverage (the share of observations at or below the
+        charge) is below 85%.
+      - An instrument passes if at least 90% of its fitted (non-fallback) cells pass
+        and its overall test coverage is at least 88%.
+      - Cells above 97% are flagged as over-pessimistic, with their mean over-charge
+        in points; they are not failed.
+    - **Baselines:** no correction (bar minimum alone), and one constant correction per
+      instrument. Unless the per-hour table has fewer failing cells than the constant
+      correction, the simpler model is preferred.
+    - **Points against percentage:** decided on the criteria, and on stability: a table
+      fitted on each calendar year alone, scored against the same test period.
+    - **Recorded with the approval:**
+      1. **Bars within a week are correlated** (one volatile session widens many
+         consecutive bars), so 22 test weeks carry less evidence than about 440 bars
+         per cell suggests. Read per-cell failures with that in mind: a cell failing
+         narrowly may be one bad week.
+      2. **This run validates the method; it doesn't produce the tables backtests
+         use.** Tables used in backtests are re-fitted on data before each backtest's
+         start only.
+    - **Definitions fixed to write the code, set before any result. 1-5 APPROVED
+      2026-11-20:**
+      1. The 5-minute gap test is half-open: no tick in [boundary − 5 min, boundary).
+         If the gap rule finds no later tick in the sampled week, the observation is
+         dropped and counted.
+      2. Thresholds are inclusive: exactly 85% passes a cell; exactly 88% and exactly
+         90% of cells pass an instrument.
+      3. Year stability = the range (highest minus lowest) of the instrument's overall
+         test coverage across the single-year fits. Only full sampled years count:
+         EURUSD 2020-2024, the others 2022-2024. The others' 2021 (three weeks) is
+         reported but not counted. **The drift evidence is thin:** four of the five
+         instruments have only three full years (2022-2024), so their range is taken
+         over three fits.
+      4. Form chosen per instrument: if only one form passes, that one. If both pass,
+         the smaller year range wins, and points if they're equal. If neither passes,
+         the instrument fails and no form is chosen.
+      5. Data integrity check before trusting anything: each bar's stored spread is
+         compared with the minimum tick spread in [open, open + 15 min). If more than
+         1% of an instrument's bars disagree, that instrument stops and is reported.
+         **Amended after the first hand-check run, APPROVED 2026-11-20:** bars with
+         no ticks inside them are excluded and counted, and the 1% applies to bars that
+         have ticks. That first run counted XAUUSD 664 of 28,057 bars (2.37%) as
+         disagreeing, but 553 of those have no ticks at all:
+         - 444 are in the 2021-09-05 week, before the tick history begins (that month
+           was sampled on purpose, to catch the true start);
+         - 89 are a hole in FTMO's served ticks: the week of 2021-11-28 has bars all
+           week, but ticks only from Wednesday 2021-12-01 23:29:39 UTC (the manifest's
+           per-day counts agree);
+         - 20 are scattered (2021-11, 2022-07, 2022-09, 2025-12).
+
+         Bars with ticks that genuinely disagree: **111 of 27,504 (0.40%)**. In 86 of
+         them the stored value is higher than the tick minimum, usually by a point or
+         two, with a few larger (2022-01-16 23:00 UTC, stored 15, ticks 7). Cause not
+         investigated. The extracted history may hold ticks the bar was not built
+         from.
+         Bars with no ticks are unmeasurable, not mismatches. They are still counted
+         and reported per instrument.
+      6. **DECIDED 2026-11-20, before results:** a cell with fewer than 100 test bars
+         is reported but not judged, neither passing nor failing. Any instrument with
+         more than two unjudged cells is flagged.
+      7. **DECIDED 2026-11-20, before results: every cell with at least 100 test bars
+         is judged, whether it was fitted or fell back.** This replaces "fitted cells"
+         in the instrument criterion. A fallback cell's charge is what a backtest would
+         use, and thin hours (session opens, the rollover) are where an undercharge
+         matters most. Fallback cells are reported separately. The instrument criterion
+         is therefore: at least 90% of judged cells pass.
+      8. **Confirmed: the overall 88% is computed over every test observation**, in
+         every cell, including unjudged ones.
+    - **Hand check, XAUUSD server hour 14, fit period (operator, 2026-11-20):** N =
+      1,528, rank ⌈0.9 × 1,528⌉ = 1,376, correction **V = 14 points**. With it, **12
+      of the 12** test boundaries are covered. The export's rank 1,376 reads 14.
+    - **RESULTS, 2026-11-20** (`fit_spread_correction.py`, run on 857bc7d plus the
+      uncommitted 3c.2 files; report and JSON in `C:\trading\runtime\spread_correction\`).
+      **The script agrees with the hand check:** V = +14, 12 of 12. Every cell had at
+      least 100 test bars, so none was unjudged and none fell back. Server hour 0 has no
+      bars on any instrument.
+
+      | | No correction | Points: verdict, overall | Percentage | Hour structure earns its place? | Form chosen (def. 4) |
+      |---|---|---|---|---|---|
+      | NAS100 | 63.7%, FAIL | PASS, 97.88%, 0 failed; drift 0.20 pts | PASS, 97.66%; drift 1.29 | yes | points |
+      | US500 | 78.6%, FAIL | PASS, 97.93%; drift 4.74 | PASS, 97.11%; drift 5.34 | no: constant +20 pts preferred | points |
+      | EURUSD | — | **STOPPED by the data check**: 19.79% of measured bars disagree | — | — | none |
+      | XAUUSD | 23.5%, FAIL | PASS, 97.69%, 1 failed (hour 23, 83.70%); drift 4.69 | PASS, 99.35%; drift 0.51 | no: constant +15 pts preferred | **percentage** |
+      | XAGUSD | 22.7%, FAIL | **FAIL**, 69.40%, all 23 cells fail | PASS, 95.53%; drift 1.16 | no: constant 70% preferred | percentage |
+
+      Drift is in percentage points. The bar minimum alone fails everywhere, by a wide
+      margin, which confirms that today's model understates the spread. The results are
+      recorded as produced. **Not yet reviewed by the operator; nothing here has been
+      acted on.**
+      - **EURUSD stop, cause found (read-only diagnostic):** in every disagreement the
+        stored spread is above the tick minimum. 7,602 of the 7,676 are in 2020-2021,
+        and 6,270 of them store 50 points where the ticks reach 0. From 2022 on, 74
+        disagree. EURUSD's 2020-2021 bar spreads do not match FTMO's own ticks.
+      - **XAUUSD's percentage form is chosen by the drift rule but is heavily
+        over-pessimistic:** 99.35% coverage, 21 of 23 cells above 97%, and a mean
+        over-charge of about 50-70 points per observation. The bar minimum rose from
+        about 7 points (2022-2023) to about 21-39 (2025-2026), while the excess stayed
+        about the same in points. So a 200% correction fitted on small minimums
+        roughly triples the large ones. **Weakness in definition 3, visible only now:**
+        a coverage range saturates near 100%, so a form that overcharges everything
+        looks perfectly steady.
+      - **The two metals behave oppositely:** gold's excess held steady in points,
+        while silver's grew with the minimum (points fails at 69%, percentage passes at
+        95.5% with few over-pessimistic cells). Points against percentage is genuinely
+        instrument-specific.
+      - **XAUUSD hour 23** (the hour before the daily break) fails broadly. Only 10 of
+        its 132 uncovered test observations used the gap rule.
+      - **NAS100 is over-pessimistic in most hours** (99%+, about 30-60 points of
+        over-charge). Its corrections all come out as multiples of 10 points, so the
+        90th percentile lands on a step.
+      - **"Mean over-charge"** is the mean of (charge − actual spread) over the cell's
+        observations, with undercharges counted as negatives.
+      - **Dropped observations, about 58 per instrument, one per week:** the last bar
+        before the weekend (Friday, or Thursday before Good Friday) closes after its
+        last tick, and nothing follows within the week.
+      - **Index 2021 single-year fits equal the no-correction baseline exactly** (NAS100
+        63.67%, US500 78.55%). Those three weeks are below 200 bars in every hour, so
+        they use the 2021 instrument-wide value, which is evidently 0. Not checked
+        further.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
 (operator-checked); the EURUSD zero-spread evidence is recorded and its treatment

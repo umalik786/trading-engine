@@ -4,7 +4,7 @@
 tick sample, correction fitted and validated, wiring built)
 **Phase:** 3 in progress. 3a complete 2026-10-01; 3b complete 2026-10-02; 3c.0 and
 3c.1 complete 2026-11-19. **3c.2 (the spread correction) exit criterion met
-2026-11-23. 3c.3 (the sizer) built and tested 2026-11-23; golden figures pending.**
+2026-11-23. 3c.3 (the sizer) complete 2026-11-23.**
 Phase 2 complete 2026-09-30.
 
 ## RESUME HERE (session 2026-11-23)
@@ -20,13 +20,12 @@ Phase 2 complete 2026-09-30.
 4. **EURUSD's 12-week minimum is reached around January 2023** (its data starts in
    2022); the others' around October 2022.
 
-5. **3c.3 (the sizer): built and tested, golden figures pending (2026-11-23).** The
-   operator computes L1-L8 (lot sizes) and the four runs' P&L for
-   `tests/golden/test_sizer_vs_hand_figures.py`; every input is in its module docstring
-   and its LOT_CASES. Then the eleven held breaks, predictions first (listed under 3c.3). All
-   match -> 3c.3's exit criterion is met -> commit.
+5. ~~3c.3 (the sizer)~~ — **COMPLETE 2026-11-23.** Hand figures matched (L1-L8 and four
+   runs); break 8 exposed a harness defect (deciding bar not per symbol), fixed with
+   operator decisions; all eleven breaks exact on the re-run. Record under 3c.3.
 
-Then 3c.4 (the phase 3 exit), and the rest of Next below.
+**Next: 3c.4, the phase 3 exit** (everything on together, spec §9; operator hand
+figures for both strategies). Then the rest of Next below.
 
 ## Session 2026-11-17 in brief
 
@@ -1456,7 +1455,7 @@ deferred to 3c.2; the spread-table method is decided.
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
 
-### 3c.3 sizer — built 2026-11-23, golden figures pending
+### 3c.3 sizer — COMPLETE 2026-11-23
 
 **Decisions (operator, 2026-11-23), on the proposal of the same day:**
 - **Rules (section 3 of the proposal), approved.** "close" = the deciding bar's close;
@@ -1540,6 +1539,55 @@ deferred to 3c.2; the spread-table method is decided.
 11. a stop target with a weight other than +1 or -1 accepted (its test failed first,
     DID NOT RAISE, before the rule existed; the "1.00 is +1" test passed before code,
     as a guard against comparing the written form rather than the value).
+
+**Operator's hand figures (2026-11-23), entered; the engine matches every one:**
+L1 0.75, L2 -0.75, L3 2.70, L4 -0.25, L5 0, L6 3.00, L7 0.85, L8 1.15; runs
+long-weight 6831.375, short-weight -7218.375, long-stop 24592.95, short-stop -2406.125.
+
+**First break run (2026-11-23): 9 of 11 as predicted; 7 and 8 not. Not committed.**
+- **Break 7 (sign dropped) -- prediction error, not an engine fault.** The 11 tests
+  that failed are exactly those listed, but the prediction said "10" (its own list
+  sums to 11) and said the short-weight run would fail on its side. It failed with 16
+  orders: with the sign dropped the sized position always opposes the target, so the
+  hold rule never applies and every bar re-sizes; the one-order check runs first.
+- **Break 8 (hold rule removed) -- exposed a DEFECT in the harness wiring.** Predicted:
+  the two-symbol in-flight test passes (equity is constant there). It failed. Cause:
+  the harness passed the bar BEING PROCESSED as the sizer's deciding bar, whatever the
+  target's symbol, so gold was sized from silver's close (30) -> 16.67 lots, capped at
+  5.00, and silver from gold's close (2000) -> 0, sold. The hold rule masked it in
+  every test: a held position is returned before any price is used. The golden runs
+  (one symbol) were never affected. A multi-instrument strategy ENTERING one symbol on
+  another's bar would have been sized from the wrong price.
+- **Fix (operator decisions, 2026-11-23):**
+  - the deciding bar is **the latest bar of the target's own symbol**;
+  - **(a)** a target for a symbol with no bar yet **waits**: no order, a `no_bar_yet`
+    `SizingNote`, sized on that symbol's first bar;
+  - **safeguard:** a symbol targeted but given no bar in the whole run raises
+    `NoBarForTargetError` at the end.
+  Tests, each shown failing first: gold entered on a silver bar is sized from gold's
+  last close (failed: 5.00 for 0.20 -- independent of the hold rule, flat when
+  decided); a target with no bar yet waits (failed: KeyError, before waiting existed);
+  a never-seen symbol stops the run (failed: DID NOT RAISE).
+- **The deciding bar may be hours old** when its market is closed: a target for an
+  index restated on a gold bar overnight is sized from the index's last close. That
+  close is in the past, so causality holds; it is simply stale, and a strategy that
+  cares must not target a closed market.
+
+**Corrected predictions for breaks 7 and 8** (the originals above stand as written):
+- 7: the same 11 failures; the short-weight run fails "expected exactly one order"
+  (16 orders), not on its side; the short-stop run still raises StopNotExecutedError.
+- 8: with the per-symbol fix, the in-flight test PASSES under this break (equity
+  constant, the re-size equals the order); 7 failures, as first written.
+
+**Exit criterion — MET 2026-11-23.** Re-run of all eleven breaks after the fix, fresh
+predictions written first (including the corrected 7 and 8): **every one exact** --
+failures 14, 7, 4, 15, 4, 6, 11, 7, 4, 1, 4, the same tests and the same wrong sizes
+as written (e.g. break 2 moves L8 to 1.10; break 7's short-weight run places 16 orders;
+under break 8 the four runs place 16, 2, 128 and 103 orders). Hardened harness, SHA-256
+identical after every restore. All eleven breaks are in `src/engine/sizing/equity.py`;
+the three new harness tests (own-symbol, waiting, never-seen) are exact multiples of
+step and minimum, flat when decided, so none of the eleven moves them -- predicted
+and observed.
 
 ### 3c.1 slippage — COMPLETE 2026-11-19
 
@@ -1643,6 +1691,11 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
 - **Live wiring must call the spread-correction table's staleness check** (60 days;
   added 2026-11-20). The check exists from 3c.2. Nothing live exists yet to call it.
 
+- **Orchestrator design: the deciding bar is per symbol** (added 2026-11-23, 3c.3).
+  The real orchestrator must size each target from the latest bar of the TARGET's
+  symbol, not the bar being processed; a target for a symbol with no bar yet waits
+  with a note; a symbol targeted but never given a bar stops the run. The test
+  harness does this today (`tests/golden/harness.py`), found by break 8.
 - **Orchestrator design: write `SizingNote`s into the decision log** (added
   2026-11-23, 3c.3). Caps and sizes below the minimum are in the run result today;
   `DecisionRecord` has no field for them yet.

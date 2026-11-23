@@ -39,6 +39,13 @@ WHAT ONE BAR DOES, in order
   8. turn any difference between the sized target and actual into one
      market order, queued for the next bar
 
+THE DECIDING BAR IS PER SYMBOL (phase 3c.3, operator 2026-11-23). A target
+is sized from the latest bar of ITS OWN symbol, whichever symbol's bar is
+being processed -- that bar may be hours old if its market is closed. A
+target for a symbol with no bar yet waits (no order, a `no_bar_yet` note);
+a symbol targeted but never given a bar in the whole run raises
+`NoBarForTargetError` at the end.
+
 STOPS ARE NOT EXECUTED (phase 3c.3, decision D). After step 2, if a held
 position's stop -- the stop_price of the target that sized it -- lies
 within this bar's range, the run stops with `StopNotExecutedError` rather
@@ -89,6 +96,7 @@ from engine.costs.base import CostModel
 from engine.costs.zero import ZeroCostModel
 from engine.features.technical import TechnicalFeatureSet
 from engine.sizing.base import Sizer, SizingContext
+from engine.sizing.equity import SizingNote
 from engine.sizing.fixed import FixedQuantitySizer
 from engine.strategies.base import Strategy
 
@@ -104,6 +112,13 @@ class StopNotExecutedError(RuntimeError):
     not built yet (phase 3c.3, decision D). Raised rather than ignored: a
     backtest that runs straight through its stops reports losses no real
     account with those stops could have had."""
+
+
+class NoBarForTargetError(RuntimeError):
+    """A strategy targeted a symbol that received no bar in the whole run
+    (operator, 2026-11-23). Waiting for a first bar is right bar by bar; a
+    whole run of waiting means the feed and the strategy disagree about the
+    instruments, and the result would silently omit one of them."""
 
 
 @dataclass(frozen=True)
@@ -203,6 +218,10 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
 
     last_close: dict[str, datetime] = {}
     stops: dict[str, Decimal] = {}  # symbol -> stop of the target that sized it
+    # Each symbol's latest bar: the DECIDING bar for a target in that symbol,
+    # whichever symbol's bar is being processed (3c.3, operator 2026-11-23).
+    latest_bar: dict[str, Bar] = {}
+    waits: list[SizingNote] = []  # targets that waited for their symbol's first bar
     for bar_index, bar in enumerate(bars):
         # 1. rollovers up to this bar's open, on the pre-fill position.
         previous_close = last_close.get(bar.symbol)
@@ -214,6 +233,7 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
         # 3. rollovers inside this bar, on the post-fill position.
         _accrue_financing(portfolio, costs, bar.symbol, bar.ts_open, bar.ts_close)
         last_close[bar.symbol] = bar.ts_close
+        latest_bar[bar.symbol] = bar
         features.update(bar)
         snapshot = features.snapshot()
         portfolio.mark(
@@ -227,8 +247,16 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
             continue
         targets = strategy.on_bar(bar, snapshot, portfolio)
         for intent_index, target in enumerate(targets):
+            if target.symbol not in latest_bar:
+                # No close to size from yet. The target waits: targets are
+                # restated every bar, so it is sized on its symbol's first bar.
+                waits.append(
+                    SizingNote(bar.ts_close, target.symbol, "no_bar_yet", Decimal(0), Decimal(0))
+                )
+                stops.pop(target.symbol, None)
+                continue
             context = SizingContext(
-                bar=bar,
+                bar=latest_bar[target.symbol],
                 committed=_committed(portfolio, broker.pending_orders(), target.symbol),
                 spec=specs.get(target.symbol),
             )
@@ -249,6 +277,14 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
             broker.submit(order)
             orders.append(order)
 
+    never_seen = sorted({note.symbol for note in waits} - set(latest_bar))
+    if never_seen:
+        raise NoBarForTargetError(
+            f"the strategy targeted {never_seen} but no bar for "
+            f"{'it' if len(never_seen) == 1 else 'them'} arrived in the whole run, so "
+            "those targets were never sized; the feed and the strategy disagree about "
+            "the instruments"
+        )
     return BacktestResult(
         total_pnl=portfolio.equity - starting_balance,
         final_equity=portfolio.equity,
@@ -264,7 +300,9 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
         bars_processed=len(bars),
         first_bar=bars[0],
         last_bar=bars[-1],
-        sizing_notes=tuple(getattr(sizing, "notes", ())),
+        sizing_notes=tuple(
+            sorted([*waits, *getattr(sizing, "notes", ())], key=lambda note: note.ts)
+        ),
     )
 
 

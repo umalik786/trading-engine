@@ -89,22 +89,24 @@ class LotCase:
 
 
 LOT_CASES = [
-    LotCase("L1", WEIGHT, None, None, note="weight 2.3, long, from flat"),
-    LotCase("L2", -WEIGHT, None, None, note="weight 2.3, short, from flat"),
-    LotCase("L3", Decimal(1), LONG_STOP, None, note="stop 2918, long"),
-    LotCase("L4", Decimal(-1), SHORT_STOP, None, note="stop 3066, short"),
-    LotCase("L5", Decimal("0.4"), None, None, note="weight 0.4: below the minimum"),
-    LotCase("L6", Decimal(10), None, None, note="weight 10: above the maximum"),
+    LotCase("L1", WEIGHT, None, Decimal("0.75"), note="weight 2.3, long, from flat"),
+    LotCase("L2", -WEIGHT, None, Decimal("-0.75"), note="weight 2.3, short, from flat"),
+    LotCase("L3", Decimal(1), LONG_STOP, Decimal("2.70"), note="stop 2918, long"),
+    LotCase("L4", Decimal(-1), SHORT_STOP, Decimal("-0.25"), note="stop 3066, short"),
+    LotCase("L5", Decimal("0.4"), None, Decimal("0"), note="weight 0.4: below the minimum"),
+    LotCase("L6", Decimal(10), None, Decimal("3.00"), note="weight 10: above the maximum"),
     LotCase(
         "L7",
         WEIGHT,
         None,
-        None,
+        Decimal("0.85"),
         equity=Decimal("108750.00"),
         balance=Decimal("100000.00"),
         note="weight 2.3, equity 108,750.00 with balance 100,000.00 (a position open elsewhere)",
     ),
-    LotCase("L8", Decimal("3.372444"), None, None, note="weight 3.372444: exactly on a step"),
+    LotCase(
+        "L8", Decimal("3.372444"), None, Decimal("1.15"), note="weight 3.372444: exactly on a step"
+    ),
 ]
 
 
@@ -179,10 +181,10 @@ class RunCase:
 
 
 RUN_CASES = [
-    RunCase("long-weight", "L1", None),
-    RunCase("short-weight", "L2", None),
-    RunCase("long-stop", "L3", None),
-    RunCase("short-stop", "L4", None),
+    RunCase("long-weight", "L1", Decimal("6831.375")),
+    RunCase("short-weight", "L2", Decimal("-7218.375")),
+    RunCase("long-stop", "L3", Decimal("24592.95")),
+    RunCase("short-stop", "L4", Decimal("-2406.125")),
 ]
 
 

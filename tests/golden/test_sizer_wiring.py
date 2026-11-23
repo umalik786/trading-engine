@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from harness import StopNotExecutedError, run_backtest
+from harness import NoBarForTargetError, StopNotExecutedError, run_backtest
 
 from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import PortfolioView
@@ -204,3 +204,114 @@ def test_specs_that_disagree_with_the_contract_sizes_are_refused() -> None:
             contract_sizes={GOLD: Decimal(1), SILVER: Decimal(5000)},
             instruments=SPECS,
         )
+
+
+# --- the deciding bar is the TARGET's symbol's latest bar (operator, 2026-11-23) --
+
+
+class GoldOnSilverBars:
+    """Asks for gold only when called on a SILVER bar, so gold is always
+    entered on another symbol's bar."""
+
+    def __init__(self, weight: str) -> None:
+        self._weight = Decimal(weight)
+
+    def on_bar(
+        self,
+        bar: Bar,
+        features: Mapping[str, Any],  # noqa: ARG002
+        portfolio: PortfolioView,  # noqa: ARG002
+    ) -> list[TargetPosition]:
+        if bar.symbol != SILVER:
+            return []
+        return [
+            TargetPosition(
+                symbol=GOLD,
+                quantity=None,
+                weight=self._weight,
+                stop_price=None,
+                take_profit=None,
+                reason="test",
+                confidence=None,
+            )
+        ]
+
+    @property
+    def required_features(self) -> set[str]:
+        return set()
+
+    @property
+    def warmup_bars(self) -> int:
+        return 0
+
+
+def _silver(i: int) -> Bar:
+    return _bar(i, symbol=SILVER, low="30", high="30", close="30")
+
+
+def test_a_target_is_sized_from_its_own_symbols_last_close() -> None:
+    # Decided on silver's bar 0 (close 30), with gold's last close 2000:
+    # 0.4 x 100,000 / (100 x 2000) = 0.20 lots. Sized from silver's close it
+    # would be 13.3 lots, capped at 5.00. Flat when decided: no hold rule.
+    bars = [_bar(0), _silver(0), _bar(1), _silver(1), _bar(2)]
+    result = _run(bars, GoldOnSilverBars("0.4"))
+    assert [(o.symbol, o.quantity) for o in result.orders] == [(GOLD, Decimal("0.20"))]
+    assert result.sizing_notes == ()
+
+
+class GoldAndSilver:
+    """Gold weight 0.4 and silver weight 0.6, asked for on every bar."""
+
+    def on_bar(
+        self,
+        bar: Bar,  # noqa: ARG002
+        features: Mapping[str, Any],  # noqa: ARG002
+        portfolio: PortfolioView,  # noqa: ARG002
+    ) -> list[TargetPosition]:
+        return [
+            TargetPosition(
+                symbol=symbol,
+                quantity=None,
+                weight=Decimal(weight),
+                stop_price=None,
+                take_profit=None,
+                reason="test",
+                confidence=None,
+            )
+            for symbol, weight in ((GOLD, "0.4"), (SILVER, "0.6"))
+        ]
+
+    @property
+    def required_features(self) -> set[str]:
+        return set()
+
+    @property
+    def warmup_bars(self) -> int:
+        return 0
+
+
+def test_a_target_for_a_symbol_with_no_bar_yet_waits() -> None:
+    # Gold's bar 0 comes first: silver has no bar, so its target waits -- no
+    # order, one note. On silver's bar 0 it is sized from silver's close:
+    # 0.6 x 100,000 / (5000 x 30) = 0.40. Gold: 0.4 x 100,000 / (100 x 2000) = 0.20.
+    bars = [_bar(0), _silver(0), _bar(1), _silver(1), _bar(2), _silver(2)]
+    result = _run(bars, GoldAndSilver())
+    assert [(o.symbol, o.quantity) for o in result.orders] == [
+        (GOLD, Decimal("0.20")),
+        (SILVER, Decimal("0.40")),
+    ]
+    (note,) = result.sizing_notes
+    assert (note.symbol, note.kind, note.final, note.ts) == (
+        SILVER,
+        "no_bar_yet",
+        Decimal(0),
+        _bar(0).ts_close,
+    )
+
+
+def test_a_targeted_symbol_that_never_gets_a_bar_stops_the_run_at_the_end() -> None:
+    # Only gold bars: silver's target waits on every bar and is never sized.
+    # Waiting is right bar by bar; a whole run of it means the feed and the
+    # strategy disagree about the instruments, which must not pass silently.
+    with pytest.raises(NoBarForTargetError, match="XAGUSD"):
+        _run([_bar(0), _bar(1), _bar(2)], GoldAndSilver())

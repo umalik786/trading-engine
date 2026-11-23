@@ -101,7 +101,10 @@ def load_sizing_config(path: Path) -> SizingConfig:
     return SizingConfig.model_validate(raw["sizing"])
 
 
-NoteKind = Literal["capped_at_maximum", "below_minimum", "equity_not_positive"]
+# "no_bar_yet" is written by the bar loop, not the sizer: a target for a
+# symbol whose first bar has not arrived waits, because there is no close to
+# size it from (operator, 2026-11-23).
+NoteKind = Literal["capped_at_maximum", "below_minimum", "equity_not_positive", "no_bar_yet"]
 
 
 @dataclass(frozen=True)

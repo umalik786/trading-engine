@@ -1,33 +1,17 @@
 # Current State
 
-**Last session:** 2026-11-20 (3c.2: tick sample, correction fitted and validated,
-wiring built); before that 2026-11-19
+**Last session:** 2026-11-23 (3c.2 exit criterion met); before that 2026-11-20 (3c.2:
+tick sample, correction fitted and validated, wiring built)
 **Phase:** 3 in progress. 3a complete 2026-10-01; 3b complete 2026-10-02; 3c.0 and
-3c.1 complete 2026-11-19. **3c.2 (the spread correction) is in progress: wiring built
-and tested, golden figures pending.** Phase 2 complete 2026-09-30.
+3c.1 complete 2026-11-19. **3c.2 (the spread correction) exit criterion met
+2026-11-23.** Phase 2 complete 2026-09-30.
 
-## RESUME HERE (end of session 2026-11-20)
+## RESUME HERE (session 2026-11-23)
 
-The working tree was committed as work in progress. **Two golden tests fail by design
-until the operator's figures are in:**
-`test_spread_correction_vs_hand_figures.py::...[long]` and `[short]`. Everything else
-passes. In order:
-
-1. **Operator: hand figures** for `tests/golden/test_spread_correction_vs_hand_figures.py`
-   (long and short). Every input is in its module docstring: the rules, the hand-made
-   table, and the fill and last bars. Replace `expected_pnl=None` in each case.
-2. **Then the held breaks**, each with its predicted move written first, using the
-   hardened harness (no bytecode, `__pycache__` cleared after each restore, both suites
-   from a clean cache after):
-   - the European DST calendar;
-   - **the bar's close hour instead of its open hour** (approved 2026-11-20 as the
-     substitute for "the deciding bar's hour", which the cost model cannot see);
-   - the negative-correction floor removed;
-   - percentage rounding toward the trader;
-   - the correction applied to a fallback spread;
-   - a table whose cutoff is after the bar not refused.
-
-   All match → 3c.2's exit criterion is met → commit.
+1. ~~Operator hand figures~~ — **done 2026-11-23: long 9108.50, short -9624.50; the
+   engine matches both to the cent.**
+2. ~~Held breaks~~ — **done 2026-11-23: all six moved exactly as predicted.** 3c.2's
+   exit criterion is met. Record under 3c.2, "Exit criterion — MET 2026-11-23".
 3. **Before deciding XAGUSD's earliest start: a read-only check of why its bars
    disagree with the ticks in 2022-2023.** Either the stored spread is below every tick
    in the bar (the extracted ticks are missing some the bar was built from), or the bars
@@ -1348,8 +1332,7 @@ tick history; not investigated.
       **Also decided:** the table used for **live trading** carries provenance and
       **warns when its data is more than 60 days old**, like the swap staleness
       check. Built in this step (small). Calling it from the live wiring is in Next.
-    - **Wiring built, 2026-11-20 (uncommitted, awaiting the operator's hand
-      figures).**
+    - **Wiring built, 2026-11-20 (committed as work in progress, 1e09dbf).**
       - The pure rules moved into `src/engine/costs/spread_correction.py` (git mv).
       - New: `engine.costs.correction_table` (the table file, exact values, all 24
         hours, UTC cutoff, the 60-day staleness warning) and `SpreadCorrectionMethod`
@@ -1386,6 +1369,26 @@ tick history; not investigated.
         approved it for the validation runs, not explicitly for fitting.
       - **EURUSD reaches 12 weeks (from 2022) only around January 2023**, so its
         earliest backtest is about then; the others' is about October 2022.
+    - **Exit criterion — MET 2026-11-23.** Operator's hand figures, computed before
+      the engine's were seen: **long 9108.50, short -9624.50**. Engine: identical.
+      **Breaks, 2026-11-23 — every move predicted before running, every one exact.**
+      Hardened harness: each anchor replaced exactly once, no bytecode, `__pycache__`
+      cleared after each restore, SHA-256 identical after every restore, full suite
+      run per break; both suites green from a clean cache afterwards (445 passed;
+      15 MT5 passed).
+
+      | Break | Long | Short | Unit failures |
+      |---|---|---|---|
+      | 1 European calendar for the hour | 9116.50 (+8.00) | -9633.50 (-9.00) | US-calendar test (0.42 for 0.43) |
+      | 2 close hour instead of open hour | no move | -9631.50 (-7.00) | none |
+      | 3 negative floor removed | no move | -9620.50 (+4.00) | 5 floor tests (e.g. 0.26 for 0.30) |
+      | 4 percentage rounds toward trader | no move | no move | 2 (41 for 42; 0.41 for 0.42) |
+      | 5 correction applied to a fallback | no move | no move | 1 (0.63 for 0.50) |
+      | 6 late-cutoff table not refused | no move | no move | 1 (did not raise) |
+
+      Breaks 4-6 cannot move the golden figures by construction (points form, no zero
+      spreads, cutoff before every bar); the unit tests carry them. Break 2 leaves the
+      long unmoved because the fill bar closes in the hour it opens.
 
 **3c.0 COMPLETE 2026-11-19.** Exit criterion met: the bar spread is the minimum
 (operator-checked); the EURUSD zero-spread evidence is recorded and its treatment

@@ -78,8 +78,8 @@ class Case:
 
 
 CASES = [
-    Case(direction="long", expected_pnl=None),
-    Case(direction="short", expected_pnl=None),
+    Case(direction="long", expected_pnl=Decimal("9108.50")),
+    Case(direction="short", expected_pnl=Decimal("-9624.50")),
 ]
 
 

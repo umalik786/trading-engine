@@ -12,17 +12,15 @@ tick sample, correction fitted and validated, wiring built)
    engine matches both to the cent.**
 2. ~~Held breaks~~ — **done 2026-11-23: all six moved exactly as predicted.** 3c.2's
    exit criterion is met. Record under 3c.2, "Exit criterion — MET 2026-11-23".
-3. **Before deciding XAGUSD's earliest start: a read-only check of why its bars
-   disagree with the ticks in 2022-2023.** Either the stored spread is below every tick
-   in the bar (the extracted ticks are missing some the bar was built from), or the bars
-   themselves are wrong. Today, XAGUSD fails the 1% data check at every cutoff before
-   the week of 2024-06-09, so under the current rules its earliest table, and earliest
-   backtest, is about mid-2024. Applying the data check at fitting time was Claude's
-   addition, not yet confirmed by the operator. Details under 3c.2, "Wiring built".
+3. ~~XAGUSD read-only check~~ — **done 2026-11-23. Decision (operator): option (a).**
+   The data check at fitting time is confirmed as it stands, so XAGUSD's earliest table
+   and earliest backtest is about mid-2024. Finding under 3c.2, "XAGUSD bar/tick
+   disagreement".
 4. **EURUSD's 12-week minimum is reached around January 2023** (its data starts in
    2022); the others' around October 2022.
 
-Then 3c.3 (the sizer), 3c.4 (the phase 3 exit), and the rest of Next below.
+**Next: 3c.3 (the sizer)**, proposal to the operator before any code. Then 3c.4 (the
+phase 3 exit), and the rest of Next below.
 
 ## Session 2026-11-17 in brief
 
@@ -1366,9 +1364,57 @@ tick history; not investigated.
         first falls to 1% in mid-2024. Under the current rules, the earliest XAGUSD
         table, and so the earliest XAGUSD backtest, is about mid-2024. Applying the
         data check when fitting a table was my addition, as a safeguard; the operator
-        approved it for the validation runs, not explicitly for fitting.
+        approved it for the validation runs, not explicitly for fitting. **Confirmed
+        for fitting by the operator 2026-11-23 (option (a), below).**
       - **EURUSD reaches 12 weeks (from 2022) only around January 2023**, so its
         earliest backtest is about then; the others' is about October 2022.
+    - **XAGUSD bar/tick disagreement — read-only check, 2026-11-23. Decision:
+      option (a).** A bar "disagrees" when its stored spread differs from the
+      narrowest tick spread inside it. XAGUSD, from 2022:
+
+      | | 2022 | 2023 | 2024 | 2025 | 2026 |
+      |---|---|---|---|---|---|
+      | Disagreeing share | 1.19% | 1.12% | 0.19% | 0.29% | 0.04% |
+      | Stored ABOVE the narrowest tick | 64 | 62 | 10 | 11 | 2 |
+      | Stored BELOW every tick | 0 | 0 | 0 | 5 (the 2 Dec zeros) | 0 |
+
+      - **One-sided:** every 2022-2024 disagreement has the stored spread HIGHER than
+        the ticks' minimum. Neither hypothesis in the old resume note holds: missing
+        ticks would show the stored value below every tick (never, 2022-2024), and the
+        bars are not grossly wrong.
+      - **Small:** mostly 1 point (max 3 in 2022, 5 in 2023).
+      - **Usually one narrow tick:** the ticks' minimum is reached by a single tick in
+        39 of 64 bars (2022) and 46 of 62 (2023).
+      - **M1 agrees with the stored M15 spread in 126 of 126** disagreeing 2022-2023
+        bars. Same broker, so this shows the two bar series are consistent with each
+        other, not that either is right.
+      - **The same pattern on XAUUSD**, less often (0.63% in 2022, 0.83% in 2023),
+        with shared worst weeks (weeks of 2022-01-16 and 2023-06-04, and 2024-11-17).
+        So it looks venue-wide, not corrupt silver data. Cause unknown.
+      - **Absorbed by the fit:** the correction is fitted on (tick spread minus
+        stored spread) and applied on top of the same stored spread, so a stored value
+        1 point high is taken into account by the fit, not carried into the charge.
+      - **Decision (operator, 2026-11-23): option (a).** The data check at fitting
+        time stands unchanged; XAGUSD's earliest table and backtest is about mid-2024.
+        The check exists to catch bars matched to the wrong ticks (large, two-sided
+        disagreements); this is not that, but changing a threshold after seeing
+        results was rejected.
+      - **Option (b), available if a strategy later needs silver's longer window:**
+        make the check look at the direction and size of a disagreement, so this
+        pattern (1 point, stored side higher, M1 agreeing) would not stop a fit.
+        XAGUSD would then start about October 2022 with the others. It would be a
+        new rule written after seeing the data, and must be recorded as one.
+    - **Zero-spread bars inside the test period (found 2026-11-23).**
+      - **2 December 2025, XAGUSD: 5 M15 bars stored with spread 0** (08:15, 08:30,
+        08:45, 14:15, 15:00 UTC) while their ticks show 27-32 points. XAUUSD has no
+        zero that day; its 09:45 bar disagrees (stored 21, ticks 28) but is not zero.
+      - **8 December 2025: XAGUSD 9 zero bars (09:45-12:00 UTC), NAS100 1 (10:15).**
+        That week is not in the tick sample, so there are no ticks to compare.
+      - The engine treats these zeros as missing data (neither profile declares them
+        genuine) and charges the uncorrected fallback. For XAGUSD that is the
+        placeholder 0.019 (19 points), BELOW the 27-32 the 2 December ticks show, so
+        those bars are under-charged by 8-13 points. Correct behaviour under the
+        current rules; recorded because fallbacks are placeholders, not measurements.
     - **Exit criterion — MET 2026-11-23.** Operator's hand figures, computed before
       the engine's were seen: **long 9108.50, short -9624.50**. Engine: identical.
       **Breaks, 2026-11-23 — every move predicted before running, every one exact.**

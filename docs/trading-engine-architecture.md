@@ -125,9 +125,10 @@ class Bar:
 @dataclass(frozen=True)
 class TargetPosition:
     symbol: str
-    quantity: Decimal          # signed; negative = short; 0 = flat
-    # OR, for allocation-style strategies:
-    weight: Optional[Decimal]  # fraction of equity; engine converts to quantity
+    # EXACTLY ONE of quantity and weight is given; construction refuses
+    # both or neither (amended 2026-11-23, phase 3c.3)
+    quantity: Optional[Decimal]  # signed lots; negative = short; 0 = flat
+    weight: Optional[Decimal]  # signed fraction of equity; the sizer converts it
     stop_price: Optional[Decimal]
     take_profit: Optional[Decimal]
     reason: str                # human-readable; logged with every decision
@@ -222,15 +223,24 @@ The purity constraint is what makes everything else possible: it's testable in i
 ### 2.5 Position sizer
 
 ```python
+@dataclass(frozen=True)
+class SizingContext:
+    bar: Bar                       # the DECIDING bar; the fill bar does not exist yet
+    committed: Decimal             # signed: held plus ordered-but-not-filled
+    spec: Optional[InstrumentSpec] # volume limits, contract size
+
 class Sizer(Protocol):
     def size(
         self,
         target: TargetPosition,
         portfolio: PortfolioView,
         features: Mapping[str, Any],
+        context: SizingContext,
     ) -> Decimal:
-        """Convert an intent into a concrete quantity."""
+        """Convert an intent into a concrete quantity, in signed lots."""
 ```
+
+*Amended 2026-11-23 (phase 3c.3):* `context` added. A sizer needs the price it sizes from (the deciding bar's close), what is already committed (counting only held lots re-sizes an order in flight — the phase 2 double-ordering bug), and the instrument's volume limits. The rules of the first real sizer, `EquitySizer`, are recorded in `docs/state.md` under 3c.3.
 
 Separated from the strategy so you can vary sizing (fixed fractional, volatility-scaled, Kelly-capped, confidence-weighted) without touching signal logic — and A/B one against another on the same signals.
 

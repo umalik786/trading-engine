@@ -22,13 +22,24 @@ from typing import Any
 
 from engine.core.portfolio import PortfolioView
 from engine.core.types import TargetPosition
+from engine.sizing.base import SizingContext
 
 
 class FixedQuantitySizer:
+    """Passes a quantity through, unrounded and unlimited, exactly as in
+    phase 2 -- the golden tests built on it must not move. The real sizer,
+    with rounding and volume limits, is `EquitySizer`."""
+
     def size(
         self,
         target: TargetPosition,
-        portfolio: PortfolioView,  # noqa: ARG002 -- a pass-through needs neither
+        portfolio: PortfolioView,  # noqa: ARG002 -- a pass-through needs none of these
         features: Mapping[str, Any],  # noqa: ARG002
+        context: SizingContext,  # noqa: ARG002
     ) -> Decimal:
+        if target.quantity is None:
+            raise ValueError(
+                f"{target.symbol}: FixedQuantitySizer cannot size a weight, only pass a "
+                "quantity through; use a sizer that converts weights to lots"
+            )
         return target.quantity

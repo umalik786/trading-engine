@@ -177,6 +177,39 @@ class TestTargetPosition:
         with pytest.raises(FrozenInstanceError):
             tp.quantity = Decimal("2")
 
+    # Spec §2.1, amended 2026-11-23 (3c.3, decision C): a target gives a size
+    # as EXACTLY ONE of quantity (lots) or weight (fraction of equity).
+
+    @staticmethod
+    def _sized(quantity, weight) -> TargetPosition:
+        return TargetPosition(
+            symbol="XAUUSD",
+            quantity=quantity,
+            weight=weight,
+            stop_price=None,
+            take_profit=None,
+            reason="x",
+            confidence=None,
+        )
+
+    def test_a_weight_alone_is_valid(self) -> None:
+        assert self._sized(None, Decimal("0.5")).quantity is None
+
+    def test_a_quantity_alone_is_valid(self) -> None:
+        assert self._sized(Decimal("1"), None).weight is None
+
+    def test_both_quantity_and_weight_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="exactly one of quantity or weight"):
+            self._sized(Decimal("1"), Decimal("0.5"))
+
+    def test_neither_quantity_nor_weight_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="exactly one of quantity or weight"):
+            self._sized(None, None)
+
+    def test_float_weight_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Decimal"):
+            self._sized(None, 0.5)
+
 
 class TestOrder:
     def test_valid_construction(self) -> None:

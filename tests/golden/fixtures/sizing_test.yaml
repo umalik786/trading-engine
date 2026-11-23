@@ -1,0 +1,7 @@
+# Sizer configuration for the phase 3c.3 golden tests. TEST DATA: 4% is not
+# a recommendation. It is chosen, with the stops in the test, so that each
+# planned break changes a lot size the operator computes by hand, and so a
+# short's stop can sit above every price in the fixture week and still size
+# above the volume minimum.
+sizing:
+  risk_fraction: "0.04"

@@ -81,9 +81,11 @@ class Bar:
 @dataclass(frozen=True)
 class TargetPosition:
     symbol: str
-    quantity: Decimal  # signed; negative = short; 0 = flat
-    # OR, for allocation-style strategies:
-    weight: Decimal | None  # fraction of equity; engine converts to quantity
+    # EXACTLY ONE of quantity and weight is given (spec §2.1, amended
+    # 2026-11-23, phase 3c.3): two answers to "how big" would leave the
+    # sizer choosing between them silently.
+    quantity: Decimal | None  # signed lots; negative = short; 0 = flat
+    weight: Decimal | None  # signed fraction of equity; the sizer converts it
     stop_price: Decimal | None
     take_profit: Decimal | None
     reason: str  # human-readable; logged with every decision
@@ -92,6 +94,11 @@ class TargetPosition:
     def __post_init__(self) -> None:
         for field_name in ("quantity", "weight", "stop_price", "take_profit", "confidence"):
             require_decimal(field_name, getattr(self, field_name))
+        if (self.quantity is None) == (self.weight is None):
+            raise ValueError(
+                f"a target gives exactly one of quantity or weight; {self.symbol} got "
+                f"quantity={self.quantity}, weight={self.weight}"
+            )
 
 
 @dataclass(frozen=True)

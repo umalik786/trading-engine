@@ -34,9 +34,17 @@ WHAT ONE BAR DOES, in order
   5. mark the portfolio to this bar's close, asking the cost model what a
      long and a short could each exit at
   6. ask the strategy for its target positions
-  7. pass each target through the sizer
+  7. pass each target through the sizer, with the deciding bar, the
+     committed quantity (held plus ordered) and the instrument spec
   8. turn any difference between the sized target and actual into one
      market order, queued for the next bar
+
+STOPS ARE NOT EXECUTED (phase 3c.3, decision D). After step 2, if a held
+position's stop -- the stop_price of the target that sized it -- lies
+within this bar's range, the run stops with `StopNotExecutedError` rather
+than carrying on as if the stop were not there. A long's stop is checked
+against the bar's low as a sell could exit it; a short's against its high
+as a buy could exit it, i.e. at the ask.
 
 Step 2 happening before step 6 is the entire point of the fill rule: a
 decision made at bar N's close cannot be acted on until bar N+1 exists.
@@ -74,12 +82,13 @@ from decimal import Decimal
 from pathlib import Path
 
 from engine.brokers.sim import SimBroker
+from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import ExitPrices, Portfolio, PortfolioView
 from engine.core.types import Bar, Fill, Order, TargetPosition
 from engine.costs.base import CostModel
 from engine.costs.zero import ZeroCostModel
 from engine.features.technical import TechnicalFeatureSet
-from engine.sizing.base import Sizer
+from engine.sizing.base import Sizer, SizingContext
 from engine.sizing.fixed import FixedQuantitySizer
 from engine.strategies.base import Strategy
 
@@ -88,6 +97,13 @@ INSTRUMENTS_CONFIG = REPO_ROOT / "config" / "instruments.yaml"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
 CSV_COLUMNS = ("ts_open", "ts_close", "open", "high", "low", "close", "volume", "spread")
+
+
+class StopNotExecutedError(RuntimeError):
+    """A price reached the stop of a held position, and stop execution is
+    not built yet (phase 3c.3, decision D). Raised rather than ignored: a
+    backtest that runs straight through its stops reports losses no real
+    account with those stops could have had."""
 
 
 @dataclass(frozen=True)
@@ -108,6 +124,9 @@ class BacktestResult:
     bars_processed: int
     first_bar: Bar
     last_bar: Bar
+    # What the sizer capped or declined (3c.3), so it is visible. Into the
+    # decision log at orchestrator design.
+    sizing_notes: tuple = ()
 
     def describe(self) -> str:
         """A plain-text account of the run, used as the message on a failed
@@ -154,6 +173,7 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
     starting_balance: Decimal = Decimal(0),
     cost_model: CostModel | None = None,
     sizer: Sizer | None = None,
+    instruments: Mapping[str, InstrumentSpec] | None = None,
 ) -> BacktestResult:
     """Stream `bars` through `strategy` and report what came out.
 
@@ -164,6 +184,13 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
     """
     if not bars:
         raise ValueError("run_backtest needs at least one bar")
+    specs = dict(instruments or {})
+    for symbol, spec in specs.items():
+        if symbol in contract_sizes and contract_sizes[symbol] != spec.contract_size:
+            raise ValueError(
+                f"{symbol}: contract size {contract_sizes[symbol]} disagrees with the "
+                f"instrument spec's {spec.contract_size}"
+            )
 
     costs = cost_model or ZeroCostModel()
     portfolio = Portfolio(starting_balance=starting_balance, contract_sizes=contract_sizes)
@@ -175,6 +202,7 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
     fills: list[Fill] = []
 
     last_close: dict[str, datetime] = {}
+    stops: dict[str, Decimal] = {}  # symbol -> stop of the target that sized it
     for bar_index, bar in enumerate(bars):
         # 1. rollovers up to this bar's open, on the pre-fill position.
         previous_close = last_close.get(bar.symbol)
@@ -182,6 +210,7 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
             _accrue_financing(portfolio, costs, bar.symbol, previous_close, bar.ts_open)
         # 2. fills at this bar's open.
         fills.extend(broker.fill_pending(bar))
+        _refuse_a_reached_stop(bar, stops.get(bar.symbol), portfolio, costs)
         # 3. rollovers inside this bar, on the post-fill position.
         _accrue_financing(portfolio, costs, bar.symbol, bar.ts_open, bar.ts_close)
         last_close[bar.symbol] = bar.ts_close
@@ -198,10 +227,20 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
             continue
         targets = strategy.on_bar(bar, snapshot, portfolio)
         for intent_index, target in enumerate(targets):
+            context = SizingContext(
+                bar=bar,
+                committed=_committed(portfolio, broker.pending_orders(), target.symbol),
+                spec=specs.get(target.symbol),
+            )
+            sized = sizing.size(target, portfolio, snapshot, context)
+            if target.stop_price is not None and sized != 0:
+                stops[target.symbol] = target.stop_price
+            else:
+                stops.pop(target.symbol, None)
             order = _order_for_target(
                 target,
                 portfolio,
-                sized_quantity=sizing.size(target, portfolio, snapshot),
+                sized_quantity=sized,
                 pending_orders=broker.pending_orders(),
                 identifier=_client_order_id(strategy_name, target.symbol, bar, intent_index),
             )
@@ -225,7 +264,33 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
         bars_processed=len(bars),
         first_bar=bars[0],
         last_bar=bars[-1],
+        sizing_notes=tuple(getattr(sizing, "notes", ())),
     )
+
+
+def _committed(portfolio: PortfolioView, pending_orders: Sequence[Order], symbol: str) -> Decimal:
+    """Held plus ordered-but-not-filled, signed. See `_order_for_target`."""
+    return portfolio.position_quantity(symbol) + _net_pending_quantity(pending_orders, symbol)
+
+
+def _refuse_a_reached_stop(
+    bar: Bar, stop: Decimal | None, portfolio: PortfolioView, costs: CostModel
+) -> None:
+    """Stop the run if this bar reached the stop of a held position."""
+    held = portfolio.position_quantity(bar.symbol)
+    if stop is None or held == 0:
+        return
+    if held > 0:
+        reached = costs.executable_price("sell", bar, bar.low) <= stop
+    else:
+        reached = costs.executable_price("buy", bar, bar.high) >= stop
+    if reached:
+        raise StopNotExecutedError(
+            f"{bar.symbol} reached the stop {stop} of the position held ({held} lots) in "
+            f"the bar opening {bar.ts_open.isoformat()}, and stop execution is not built "
+            "yet (phase 3c.3, decision D). Running on would report a result no account "
+            "with this stop could have had."
+        )
 
 
 def _order_for_target(
@@ -261,9 +326,7 @@ def _order_for_target(
     one intent produces at most one order. They separate in phase 3, when
     a sizer can turn a single intent into several.
     """
-    committed = portfolio.position_quantity(target.symbol) + _net_pending_quantity(
-        pending_orders, target.symbol
-    )
+    committed = _committed(portfolio, pending_orders, target.symbol)
     # The sized quantity, not the target's own, is what the engine aims
     # for -- the sizer is the only thing entitled to decide how big a
     # position is. `FixedQuantitySizer` returns the target unchanged,

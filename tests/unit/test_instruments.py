@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from engine.core.instruments import (
+    InstrumentSpec,
     load_bars_genuine_from,
     load_contract_sizes,
     load_instrument_specs,
@@ -50,6 +51,82 @@ class TestShippedConfig:
         specs = load_instrument_specs(INSTRUMENTS_CONFIG)
         sizes = load_contract_sizes(INSTRUMENTS_CONFIG)
         assert {symbol: spec.contract_size for symbol, spec in specs.items()} == sizes
+
+
+class TestVolumeLimits:
+    """Volume minimum, step and maximum (3c.3, approved 2026-11-23). Read
+    from symbol_info() on FTMO-Demo, 2026-11-17 06:21:41 UTC, terminal build
+    6320 (C:/trading/data/mt5-verification-2026-11-17.json)."""
+
+    @pytest.mark.parametrize(
+        ("symbol", "maximum"),
+        [
+            ("NAS100", Decimal(1000)),
+            ("US500", Decimal(1000)),
+            ("EURUSD", Decimal(50)),
+            ("XAUUSD", Decimal(100)),
+            ("XAGUSD", Decimal(100)),
+        ],
+    )
+    def test_the_shipped_config_carries_the_2026_11_17_readings(
+        self, symbol: str, maximum: Decimal
+    ) -> None:
+        spec = load_instrument_specs(INSTRUMENTS_CONFIG)[symbol]
+        assert (spec.volume_min, spec.volume_step, spec.volume_max) == (
+            Decimal("0.01"),
+            Decimal("0.01"),
+            maximum,
+        )
+
+    @staticmethod
+    def _spec(**volume) -> InstrumentSpec:
+        fields = {
+            "contract_size": 100,
+            "point": "0.01",
+            "volume_min": "0.10",
+            "volume_step": "0.05",
+            "volume_max": "5.00",
+        } | volume
+        return InstrumentSpec.model_validate(fields)
+
+    @pytest.mark.parametrize("missing", ["volume_min", "volume_step", "volume_max"])
+    def test_each_volume_field_is_required(self, missing: str) -> None:
+        fields = {
+            "contract_size": 100,
+            "point": "0.01",
+            "volume_min": "0.10",
+            "volume_step": "0.05",
+            "volume_max": "5.00",
+        }
+        del fields[missing]
+        with pytest.raises(ValidationError, match=missing):
+            InstrumentSpec.model_validate(fields)
+
+    @pytest.mark.parametrize("field", ["volume_min", "volume_step", "volume_max"])
+    def test_zero_is_refused(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            self._spec(**{field: "0"})
+
+    def test_minimum_above_maximum_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="minimum"):
+            self._spec(volume_min="6.00")
+
+    def test_a_minimum_off_the_step_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="multiple of the step"):
+            self._spec(volume_min="0.12")
+
+    def test_a_maximum_off_the_step_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="multiple of the step"):
+            self._spec(volume_max="4.99")
+
+    def test_a_float_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="quote"):
+            self._spec(volume_step=0.05)
+
+    def test_values_load_exactly(self) -> None:
+        spec = self._spec()
+        assert spec.volume_step == Decimal("0.05")
+        assert isinstance(spec.volume_step, Decimal)
 
 
 class TestBarsGenuineFrom:
@@ -95,9 +172,7 @@ class TestBarsGenuineFrom:
 
 class TestValidation:
     @pytest.mark.parametrize("bad_value", ["0", "-100"])
-    def test_a_non_positive_contract_size_is_rejected(
-        self, tmp_path: Path, bad_value: str
-    ) -> None:
+    def test_a_non_positive_contract_size_is_rejected(self, tmp_path: Path, bad_value: str) -> None:
         """Zero reports every trade as breaking even and a negative one
         reports every loss as a profit. Both are silent."""
         config = tmp_path / "instruments.yaml"

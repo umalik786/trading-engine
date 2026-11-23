@@ -23,7 +23,15 @@ from engine.costs.correction_table import SpreadCorrectionTable
 from engine.costs.profile import CostProfile
 
 SYMBOL = "XAUUSD"
-SPECS = {SYMBOL: InstrumentSpec(contract_size=Decimal(100), point=Decimal("0.01"))}
+SPECS = {
+    SYMBOL: InstrumentSpec(
+        contract_size=Decimal(100),
+        point=Decimal("0.01"),
+        volume_min=Decimal("0.01"),
+        volume_step=Decimal("0.01"),
+        volume_max=Decimal(100),
+    )
+}
 CUTOFF = datetime(2025, 1, 1, tzinfo=UTC)
 WIDTH = timedelta(minutes=15)
 # June: New York on summer time -> server UTC+3. 10:00 UTC = server 13:00.

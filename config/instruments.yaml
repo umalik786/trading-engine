@@ -56,11 +56,25 @@
 # them (spec B.6); this is where the engine is told not to believe them.
 # EURUSD, XAUUSD and XAGUSD were clean on all four timeframes (M1, M15,
 # H1, H4) back to their first year.
+#
+# volume_min, volume_step, volume_max: lots, as the broker accepts them.
+# The sizer rounds DOWN to the step, sizes below the minimum to zero and
+# caps at the maximum (phase 3c.3). The loader refuses a minimum or maximum
+# that is not a whole multiple of the step.
+# READ 2026-11-17 06:21:41 UTC from symbol_info() on FTMO-Demo (FTMO Global
+# Markets Ltd), terminal build 6320.
+# Source: C:	rading\data\mt5-verification-2026-11-17.json
+#   SHA-256 5bf9841b44a7d97f5e4e3258c8a6bb39ddcab3ca47784090bcd6d7ef755f8911
+# A reading records what the broker reported on one day (A.6 still requires
+# them read at startup and every order validated against them).
 instruments:
   NAS100:
     contract_size: 1
     point: "0.01"
     quote_currency: USD
+    volume_min: "0.01"
+    volume_step: "0.01"
+    volume_max: "1000"
     bars_genuine_from:
       M1: "2021-09-15T00:00:00Z"
       M15: "2021-09-15T00:00:00Z"
@@ -70,6 +84,9 @@ instruments:
     contract_size: 1
     point: "0.01"
     quote_currency: USD
+    volume_min: "0.01"
+    volume_step: "0.01"
+    volume_max: "1000"
     bars_genuine_from:
       M1: "2021-09-15T00:00:00Z"
       M15: "2021-09-15T00:00:00Z"
@@ -79,11 +96,20 @@ instruments:
     contract_size: 100000
     point: "0.00001"
     quote_currency: USD
+    volume_min: "0.01"
+    volume_step: "0.01"
+    volume_max: "50"
   XAUUSD:
     contract_size: 100
     point: "0.01"
     quote_currency: USD
+    volume_min: "0.01"
+    volume_step: "0.01"
+    volume_max: "100"
   XAGUSD:
     contract_size: 5000
     point: "0.001"
     quote_currency: USD
+    volume_min: "0.01"
+    volume_step: "0.01"
+    volume_max: "100"

@@ -4,7 +4,8 @@
 tick sample, correction fitted and validated, wiring built)
 **Phase:** 3 in progress. 3a complete 2026-10-01; 3b complete 2026-10-02; 3c.0 and
 3c.1 complete 2026-11-19. **3c.2 (the spread correction) exit criterion met
-2026-11-23.** Phase 2 complete 2026-09-30.
+2026-11-23. 3c.3 (the sizer) built and tested 2026-11-23; golden figures pending.**
+Phase 2 complete 2026-09-30.
 
 ## RESUME HERE (session 2026-11-23)
 
@@ -19,8 +20,13 @@ tick sample, correction fitted and validated, wiring built)
 4. **EURUSD's 12-week minimum is reached around January 2023** (its data starts in
    2022); the others' around October 2022.
 
-**Next: 3c.3 (the sizer)**, proposal to the operator before any code. Then 3c.4 (the
-phase 3 exit), and the rest of Next below.
+5. **3c.3 (the sizer): built and tested, golden figures pending (2026-11-23).** The
+   operator computes L1-L8 (lot sizes) and the four runs' P&L for
+   `tests/golden/test_sizer_vs_hand_figures.py`; every input is in its module docstring
+   and its LOT_CASES. Then the eleven held breaks, predictions first (listed under 3c.3). All
+   match -> 3c.3's exit criterion is met -> commit.
+
+Then 3c.4 (the phase 3 exit), and the rest of Next below.
 
 ## Session 2026-11-17 in brief
 
@@ -1450,6 +1456,91 @@ deferred to 3c.2; the spread-table method is decided.
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
 
+### 3c.3 sizer — built 2026-11-23, golden figures pending
+
+**Decisions (operator, 2026-11-23), on the proposal of the same day:**
+- **Rules (section 3 of the proposal), approved.** "close" = the deciding bar's close;
+  "equity" = equity marked at that close.
+  - weight w, no stop: |w| x equity / (contract size x close)
+  - a stop: risk fraction x equity / (contract size x |close - stop|); the weight
+    then gives only the DIRECTION and **must be exactly +1 or -1** -- any other weight
+    is refused as a second answer to "how big" (operator, 2026-11-23, decision C;
+    replaces Claude's first reading, which ignored the weight's size)
+  - quantity q: |q|
+  - then: round toward zero to the step; below the minimum -> 0; above the maximum
+    -> the maximum; apply the sign. Exact arithmetic (fractions) until the rounding.
+  - Refusals: a stop on the wrong side of the close or at it; a stop with a quantity;
+    a stop with a weight other than +1 or -1;
+    a stop on a flat target; neither or both of quantity and weight; no instrument
+    spec. Equity at or below zero sizes to 0.
+  - Risk fraction is sizer config, no default; not a firm rule, not the strategy's.
+- **A. Hold rule, for weight- and stop-sized targets ONLY.** If the committed
+  position is non-zero and in the target's direction, it is kept. Quantity targets
+  order the difference exactly as before. **Limit, recorded: changing a weight in the
+  same direction has no effect until the position-conventions step.**
+- **B. Spec §2.5 amended:** the sizer also receives a `SizingContext` (deciding bar,
+  committed quantity = held plus ordered, instrument spec).
+- **C. Spec §2.1 amended:** a `TargetPosition` gives exactly one of quantity or weight.
+- **D. Stops are not executed yet, and that is enforced:** if a price reaches the stop
+  of a held position during a backtest, the run stops with `StopNotExecutedError`
+  (long: bid low <= stop; short: ask high >= stop, via the cost model). The golden
+  stops are guard-tested as never reached.
+- **Known understatement, recorded:** the risk distance is the raw price distance; a
+  real stop-out also pays spread, slippage and commission, so the loss at the stop
+  exceeds the risk budget. Revisit when stops are executed.
+- **Caps are made visible:** a cap, a size below the minimum and a non-positive equity
+  each add a `SizingNote`; the run result carries them (`sizing_notes`). Into the
+  decision log at orchestrator design (Next).
+- **Figures:** L1-L8 plus all four runs (weight and stop, long and short).
+
+**Built:**
+- `InstrumentSpec` gains `volume_min`, `volume_step`, `volume_max` (required, no
+  default, floats refused, minimum and maximum whole multiples of the step).
+  `config/instruments.yaml` carries the 2026-11-17 readings (all five 0.01/0.01;
+  maximum 1000 indices, 50 EURUSD, 100 metals), with provenance and the reading
+  file's SHA-256.
+- `engine.sizing.equity`: `EquitySizer`, `SizingConfig` (`risk_fraction`),
+  `load_sizing_config`, `SizingNote`. `FixedQuantitySizer` is unchanged in behaviour
+  (no rounding, no limits) and refuses a weight; every earlier golden figure stands.
+- `AlwaysLong` / `AlwaysShort` take `weight=` and `stop_price=` (positive weight;
+  the strategy applies the sign).
+- The harness (`tests/golden/harness.py`): passes the context, enforces D, refuses
+  specs whose contract size disagrees with the run's, carries `sizing_notes`. The
+  instrument specs are OPTIONAL in the harness so the earlier golden tests stay
+  untouched; `EquitySizer` refuses to run without one.
+- **Tests:** written first against stubs (a sizer returning 0 for everything). 85
+  failed, each on its assertion, a refusal not raised, or the new contract not yet
+  existing. **Seven passed before any code:** zero weight is flat; a flat weight
+  closes a position; below the minimum is zero (weight and quantity) -- all because
+  the stub returns 0 (held breaks 5 and 10 cover them); and three `TargetPosition`
+  tests of behaviour that already existed (weight alone valid, quantity alone valid,
+  float weight refused), there to stop the new rule being written too strictly.
+- **Golden inputs:** the 3c.2 fixture, profile and table, unchanged; new
+  `instruments_sizer_test.yaml` (minimum 0.20, step 0.05, maximum 3.00 -- the real
+  0.01/0.01 cannot tell a step from a minimum) and `sizing_test.yaml` (risk fraction
+  0.04, test data). Weight 2.3; long stop 2918; short stop 3066 (the week's highest
+  ask after the decision is 3038.51; its lowest bid, 2932.85, is above the deciding
+  close). **No single weight can catch both "open instead of close" and "round to
+  nearest"** (the open-to-close gap is 0.02% of the price, so it flips a size only
+  just above a step boundary, where both roundings agree); the stop runs catch the
+  first, the weight runs the second.
+- **Fixture guard** shown failing, message only, file restored to an identical SHA-256:
+  short stop 3030 (fails a rounding check first), weight 1.2, L8 off its step, and
+  short stop 2990 (reached: both the guard and `StopNotExecutedError` fire).
+- **Incident, disclosed:** a `ruff check --fix` over all of `tests/` reordered two
+  imports in `tests/properties/test_future_shuffle.py`. Reverted with `git checkout`
+  before anything else ran; the file is unchanged from HEAD.
+
+**Held breaks (predictions written before each, after the operator's figures):**
+1. round to nearest instead of down; 2. the deciding bar's open instead of its close;
+3. balance instead of equity; 4. round to the minimum instead of the step;
+5. minimum ignored; 6. maximum cap removed; 7. sign dropped (a short sized as a long);
+8. hold rule removed (re-size every bar); 9. wrong-side stop accepted;
+10. a flat weight held instead of closed (covers two tests that passed before code);
+11. a stop target with a weight other than +1 or -1 accepted (its test failed first,
+    DID NOT RAISE, before the rule existed; the "1.00 is +1" test passed before code,
+    as a guard against comparing the written form rather than the value).
+
 ### 3c.1 slippage — COMPLETE 2026-11-19
 
 **Built, tests first:**
@@ -1551,6 +1642,15 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
 
 - **Live wiring must call the spread-correction table's staleness check** (60 days;
   added 2026-11-20). The check exists from 3c.2. Nothing live exists yet to call it.
+
+- **Orchestrator design: write `SizingNote`s into the decision log** (added
+  2026-11-23, 3c.3). Caps and sizes below the minimum are in the run result today;
+  `DecisionRecord` has no field for them yet.
+- **Position conventions: decide rebalancing.** Under the 3c.3 hold rule a weight
+  change in the same direction does nothing (added 2026-11-23).
+- **Stop execution** (position conventions / orchestrator). Until then a backtest
+  stops when a held position's stop is reached. When built: revisit the risk-distance
+  understatement (costs at the stop) (added 2026-11-23).
 
 ## Phase 5 notes
 

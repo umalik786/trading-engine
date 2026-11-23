@@ -1,9 +1,9 @@
 """Per-instrument specifications, loaded from configuration.
 
-One field so far: `contract_size`, the multiplier that turns a price move
-into money (P&L = lots x contract_size x price change). More of the
-symbol specification -- volume step, minimum volume, digits, margin --
-arrives with the sizer, which needs it.
+`contract_size` is the multiplier that turns a price move into money
+(P&L = lots x contract_size x price change). The volume minimum, step and
+maximum arrived with the sizer (phase 3c.3), which rounds to them. Margin
+is not here yet: checking it is the risk gate's job (phase 4).
 
 This is a config file rather than a dict in Python because Appendix A.6
 requires it: these are broker facts, read from `symbol_info()` at startup
@@ -22,7 +22,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class InstrumentSpec(BaseModel):
@@ -43,6 +43,38 @@ class InstrumentSpec(BaseModel):
     # September 2021 is daily then hourly bars. A timeframe absent here has
     # no restriction. See check_bar_spacing.py, which is how these are found.
     bars_genuine_from: dict[str, datetime] = Field(default_factory=dict)
+    # Volume limits in lots (phase 3c.3). No defaults: a missing step would
+    # leave the sizer free to order sizes the broker refuses, and there is no
+    # venue-neutral guess. The minimum and maximum must be whole multiples of
+    # the step, so "round down to the step" can only produce a volume the
+    # broker accepts.
+    volume_min: Decimal = Field(gt=0)
+    volume_step: Decimal = Field(gt=0)
+    volume_max: Decimal = Field(gt=0)
+
+    @field_validator("volume_min", "volume_step", "volume_max", mode="before")
+    @classmethod
+    def _no_floats(cls, value: object, info: ValidationInfo) -> object:
+        if isinstance(value, float):
+            raise ValueError(
+                f"{info.field_name} was read as a float ({value!r}); quote it so it is "
+                "parsed as exact decimal text"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _volumes_fit_the_step(self) -> InstrumentSpec:
+        if self.volume_min > self.volume_max:
+            raise ValueError(
+                f"volume minimum {self.volume_min} is above the maximum {self.volume_max}"
+            )
+        for name in ("volume_min", "volume_max"):
+            value = getattr(self, name)
+            if value % self.volume_step != 0:
+                raise ValueError(
+                    f"{name} {value} is not a whole multiple of the step {self.volume_step}"
+                )
+        return self
 
     @field_validator("bars_genuine_from")
     @classmethod

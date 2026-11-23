@@ -26,7 +26,12 @@ from engine.costs.profile import CostProfile
 SYMBOL = "XAUUSD"
 SPECS = {
     SYMBOL: InstrumentSpec(
-        contract_size=Decimal(100), point=Decimal("0.01"), quote_currency="USD"
+        contract_size=Decimal(100),
+        point=Decimal("0.01"),
+        quote_currency="USD",
+        volume_min=Decimal("0.01"),
+        volume_step=Decimal("0.01"),
+        volume_max=Decimal(100),
     )
 }
 LONG_NIGHT = Decimal("-10.00")
@@ -62,9 +67,7 @@ def _model(
                     }
                 }
             },
-            "instruments": {
-                SYMBOL: {"commission": {"shape": "per_lot_per_side", "value": "0"}}
-            },
+            "instruments": {SYMBOL: {"commission": {"shape": "per_lot_per_side", "value": "0"}}},
         }
     )
     return ConfiguredCostModel(profile, SPECS)
@@ -154,9 +157,9 @@ class TestWeekendsAndTripleDay:
         Wednesday-night one."""
         start, end = _window(5, hours=11)
 
-        assert _model(triple_weekday="Wednesday").financing(
-            _position(), start, end
-        ) == LONG_NIGHT * 3
+        assert (
+            _model(triple_weekday="Wednesday").financing(_position(), start, end) == LONG_NIGHT * 3
+        )
 
     def test_the_triple_day_is_configuration_not_a_constant(self) -> None:
         """Thursday instead: the Wednesday rollover becomes a single and
@@ -166,9 +169,7 @@ class TestWeekendsAndTripleDay:
         thursday_start, thursday_end = _window(6, hours=11)
 
         assert model.financing(_position(), wednesday_start, wednesday_end) == LONG_NIGHT
-        assert (
-            model.financing(_position(), thursday_start, thursday_end) == LONG_NIGHT * 3
-        )
+        assert model.financing(_position(), thursday_start, thursday_end) == LONG_NIGHT * 3
 
     def test_no_triple_day_means_every_weekday_is_single(self) -> None:
         start, end = _window(5, hours=11)
@@ -331,9 +332,7 @@ class TestConfigurationGuards:
                 {
                     "profile": "no-clock",
                     "price_basis": "bid",
-                    "financing": {
-                        "instruments": {SYMBOL: {"shape": "points", "long_rate": "-1"}}
-                    },
+                    "financing": {"instruments": {SYMBOL: {"shape": "points", "long_rate": "-1"}}},
                     "instruments": {
                         SYMBOL: {"commission": {"shape": "per_lot_per_side", "value": "0"}}
                     },

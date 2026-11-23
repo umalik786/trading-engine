@@ -203,3 +203,41 @@ class TestAlwaysFlat:
         strategy = AlwaysFlat(symbol=SYMBOL)
         assert strategy.required_features == set()
         assert strategy.warmup_bars == 0
+
+
+# --- weight and stop options (3c.3, approved 2026-11-23) ----------------------
+
+
+@pytest.mark.parametrize(("cls", "sign"), [(AlwaysLong, 1), (AlwaysShort, -1)])
+class TestWeightAndStopOptions:
+    def test_a_weight_target_carries_the_signed_weight_and_no_quantity(self, cls, sign) -> None:
+        (target,) = cls(SYMBOL, weight=Decimal("1.5")).on_bar(_bar(0, "2000"), {}, _portfolio())
+        assert target.weight == sign * Decimal("1.5")
+        assert target.quantity is None
+        assert target.stop_price is None
+
+    def test_a_stop_is_passed_through_unchanged(self, cls, sign) -> None:
+        stop = Decimal("1900") if sign > 0 else Decimal("2100")
+        strategy = cls(SYMBOL, weight=Decimal(1), stop_price=stop)
+        for index, close in enumerate(["2000", "2050"]):
+            (target,) = strategy.on_bar(_bar(index, close), {}, _portfolio())
+            assert target.stop_price == stop
+            assert target.weight == sign * Decimal(1)
+
+    def test_exactly_one_of_quantity_or_weight(self, cls, sign) -> None:  # noqa: ARG002
+        with pytest.raises(ValueError, match="exactly one of quantity or weight"):
+            cls(SYMBOL, quantity=Decimal(1), weight=Decimal(1))
+        with pytest.raises(ValueError, match="exactly one of quantity or weight"):
+            cls(SYMBOL)
+
+    def test_a_weight_must_be_positive(self, cls, sign) -> None:  # noqa: ARG002
+        with pytest.raises(ValueError, match="positive"):
+            cls(SYMBOL, weight=Decimal(0))
+        with pytest.raises(ValueError, match="positive"):
+            cls(SYMBOL, weight=Decimal(-1))
+
+    def test_floats_are_rejected(self, cls, sign) -> None:  # noqa: ARG002
+        with pytest.raises(TypeError, match="Decimal"):
+            cls(SYMBOL, weight=1.0)
+        with pytest.raises(TypeError, match="Decimal"):
+            cls(SYMBOL, weight=Decimal(1), stop_price=1900.0)

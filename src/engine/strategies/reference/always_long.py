@@ -29,12 +29,41 @@ from engine.core.types import Bar, TargetPosition, require_decimal
 
 
 class AlwaysLong:
-    def __init__(self, symbol: str, quantity: Decimal) -> None:
+    """Sized as EXACTLY ONE of `quantity` (lots) or `weight` (fraction of
+    equity), both positive; the strategy applies the direction. A
+    `stop_price` (3c.3) is passed through on every target for a sizer to
+    size against; the strategy itself never acts on it."""
+
+    def __init__(
+        self,
+        symbol: str,
+        quantity: Decimal | None = None,
+        *,
+        weight: Decimal | None = None,
+        stop_price: Decimal | None = None,
+    ) -> None:
         require_decimal("quantity", quantity)
-        if quantity <= 0:
-            raise ValueError(f"AlwaysLong quantity must be positive lots, got {quantity}")
+        require_decimal("weight", weight)
+        require_decimal("stop_price", stop_price)
+        if (quantity is None) == (weight is None):
+            raise ValueError(
+                f"AlwaysLong takes exactly one of quantity or weight, got "
+                f"quantity={quantity}, weight={weight}"
+            )
+        if quantity is not None and quantity <= 0:
+            raise ValueError(
+                f"AlwaysLong quantity must be positive lots, got {quantity} -- "
+                "the sign is applied by the strategy, not by the caller"
+            )
+        if weight is not None and weight <= 0:
+            raise ValueError(
+                f"AlwaysLong weight must be positive, got {weight} -- "
+                "the sign is applied by the strategy, not by the caller"
+            )
         self._symbol = symbol
         self._quantity = quantity
+        self._weight = weight
+        self._stop_price = stop_price
 
     def on_bar(
         self,
@@ -45,9 +74,9 @@ class AlwaysLong:
         return [
             TargetPosition(
                 symbol=self._symbol,
-                quantity=self._quantity,
-                weight=None,
-                stop_price=None,
+                quantity=None if self._quantity is None else self._quantity,
+                weight=None if self._weight is None else self._weight,
+                stop_price=self._stop_price,
                 take_profit=None,
                 reason="AlwaysLong: constant long target, every bar",
                 confidence=None,

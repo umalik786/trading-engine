@@ -20,7 +20,12 @@ from engine.costs.profile import CostProfile
 SYMBOL = "XAUUSD"
 SPECS = {
     SYMBOL: InstrumentSpec(
-        contract_size=Decimal(100), point=Decimal("0.01"), quote_currency="USD"
+        contract_size=Decimal(100),
+        point=Decimal("0.01"),
+        quote_currency="USD",
+        volume_min=Decimal("0.01"),
+        volume_step=Decimal("0.01"),
+        volume_max=Decimal(100),
     )
 }
 _TS = datetime(2025, 6, 10, 12, 0, tzinfo=UTC)
@@ -408,7 +413,12 @@ class TestCurrencyGuard:
         money figure in the wrong currency."""
         specs = {
             SYMBOL: InstrumentSpec(
-                contract_size=Decimal(100), point=Decimal("0.01"), quote_currency="EUR"
+                contract_size=Decimal(100),
+                point=Decimal("0.01"),
+                quote_currency="EUR",
+                volume_min=Decimal("0.01"),
+                volume_step=Decimal("0.01"),
+                volume_max=Decimal(100),
             )
         }
 

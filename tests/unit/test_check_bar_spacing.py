@@ -112,7 +112,9 @@ def _write_series(root: Path, instrument: str, timeframe: str, times: list[datet
 def _write_config(path: Path, genuine_from: str | None) -> Path:
     block = f'    bars_genuine_from:\n      M15: "{genuine_from}"\n' if genuine_from else ""
     path.write_text(
-        f'instruments:\n  NAS100:\n    contract_size: 1\n    point: "0.01"\n{block}',
+        f'instruments:\n  NAS100:\n    contract_size: 1\n    point: "0.01"\n'
+        '    volume_min: "0.01"\n    volume_step: "0.01"\n    volume_max: "1000"\n'
+        f"{block}",
         encoding="utf-8",
     )
     return path

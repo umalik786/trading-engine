@@ -1,0 +1,14 @@
+# Instrument spec for the phase 3c.3 golden tests (the sizer). TEST DATA, not
+# a venue. XAUUSD's real contract size and point, but volume limits chosen so
+# a figure can tell them apart: on FTMO all five instruments read minimum =
+# step = 0.01 (2026-11-17), which cannot catch a sizer that rounds to the
+# minimum instead of the step. Minimum and maximum are whole multiples of the
+# step, as the loader requires.
+instruments:
+  XAUUSD:
+    contract_size: 100
+    point: "0.01"
+    quote_currency: USD
+    volume_min: "0.20"
+    volume_step: "0.05"
+    volume_max: "3.00"

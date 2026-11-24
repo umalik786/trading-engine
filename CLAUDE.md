@@ -69,6 +69,8 @@ See `docs/state.md` for anything more recent than this line.
 
 **Never edit files with PowerShell `Get-Content`/`Set-Content`.** Use the Edit tool, or a Python script that reads and writes UTF-8 explicitly. PowerShell 5.1 decodes BOM-less UTF-8 as Windows-1252 and writes UTF-8 with a BOM, so a bulk edit silently double-encodes every non-ASCII character and prepends a BOM. The result still parses, still passes its tests, and shows up only as mangled characters in a docstring.
 
+**Never write Windows paths or other backslash text through Python string literals or shell heredocs.** Use forward slashes (`C:/trading/...`), raw strings, or the Edit tool. In an ordinary string, `\t` becomes a tab, `\r` a carriage return and `\202` a control character, so `C:\trading\data\raw` is silently garbled. This happened to the state.md recovery note on 2026-11-24 (fixed in 09d1c2a). **After any scripted edit to a doc, check the file for tabs, carriage returns and control characters before committing.**
+
 **When claiming a test passes, be prepared to show it failing.** A test that has never failed may be testing nothing. "Show me this test failing when the thing it checks is broken" is a standing question.
 
 **At the end of a session,** write the session's decisions into `docs/state.md`: current phase, what was decided and why, what is blocked, what is next. Ten lines.

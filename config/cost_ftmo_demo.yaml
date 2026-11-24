@@ -1,6 +1,6 @@
 # FTMO cost profile.
 #
-# Commission and fallback spreads below are STILL PLACEHOLDERS, so
+# Fallback spreads and slippage below are STILL PLACEHOLDERS, so
 # rules_verified is deliberately unset and the profile warns at load,
 # exactly as the FTMO loss limits do (spec 6.5.6). The file is not
 # "verified" until every value carries a primary source. What IS verified
@@ -40,8 +40,9 @@ cost_profile:
 
   financing:
     # These swap values ARE verified -- read from symbol_info() on a live
-    # FTMO account. Unlike the commission and fallback spreads, they carry a
-    # real date and source, which is why provenance is per section.
+    # FTMO account. Unlike the fallback spreads, they carry a real date and
+    # source, which is why provenance is per section (and, for commission,
+    # per instrument).
     #
     # Thirty days rather than ninety: brokers revise swap rates far more
     # often than they revise a rulebook, so these go stale sooner.
@@ -96,9 +97,12 @@ cost_profile:
 
   instruments:
     NAS100:
-      commission:
-        shape: per_lot_per_side   # UNVERIFIED
-        value: "0"                # PLACEHOLDER
+      commission:               # FTMO 0.000% (US100.cash); deals show 0 per side
+        shape: per_lot_per_side
+        value: "0"
+        provenance:
+          verified: "2026-11-24"
+          source: "ftmo.com/en/symbols/ (read by the operator in a browser 2026-11-23: Forex $5.000; XAGUSD, XAUUSD 0.0014%; indices incl. US100.cash, US500.cash 0.000%), charged HALF PER SIDE as confirmed by FTMO-Demo trial deal history 2026-11-23 (0.01 lots) and 2026-11-24 (1.00 lots), read with read_deal_commissions.py; docs/state.md, 3c.4"
       fallback_spread: "1.40"     # PLACEHOLDER -- near the observed median
       spread_correction:          # validated 3c.2; values come from a fitted table
         form: points
@@ -110,9 +114,12 @@ cost_profile:
         shape: spread_multiple
         value: "0.5"
     US500:
-      commission:
-        shape: per_lot_per_side   # UNVERIFIED
-        value: "0"                # PLACEHOLDER
+      commission:               # FTMO 0.000% (US500.cash); NO deal on US500.cash -- venue page only
+        shape: per_lot_per_side
+        value: "0"
+        provenance:
+          verified: "2026-11-24"
+          source: "ftmo.com/en/symbols/ (read by the operator in a browser 2026-11-23: Forex $5.000; XAGUSD, XAUUSD 0.0014%; indices incl. US100.cash, US500.cash 0.000%), charged HALF PER SIDE as confirmed by FTMO-Demo trial deal history 2026-11-23 (0.01 lots) and 2026-11-24 (1.00 lots), read with read_deal_commissions.py; docs/state.md, 3c.4. US500.cash itself was not traded: its zero rests on the venue page alone"
       fallback_spread: "0.39"     # PLACEHOLDER
       spread_correction:          # validated 3c.2; values come from a fitted table
         form: points
@@ -124,9 +131,12 @@ cost_profile:
         shape: spread_multiple
         value: "0.5"
     EURUSD:
-      commission:
-        shape: per_lot_per_side   # UNVERIFIED
-        value: "0"                # PLACEHOLDER
+      commission:               # FTMO Forex $5.000 per lot, half per side
+        shape: per_lot_per_side
+        value: "2.50"
+        provenance:
+          verified: "2026-11-24"
+          source: "ftmo.com/en/symbols/ (read by the operator in a browser 2026-11-23: Forex $5.000; XAGUSD, XAUUSD 0.0014%; indices incl. US100.cash, US500.cash 0.000%), charged HALF PER SIDE as confirmed by FTMO-Demo trial deal history 2026-11-23 (0.01 lots) and 2026-11-24 (1.00 lots), read with read_deal_commissions.py; docs/state.md, 3c.4"
       fallback_spread: "0.00007"  # PLACEHOLDER
       spread_correction:          # validated 3c.2; values come from a fitted table
         form: points
@@ -142,9 +152,12 @@ cost_profile:
         shape: spread_multiple
         value: "0.5"
     XAUUSD:
-      commission:
-        shape: per_lot_per_side   # UNVERIFIED
-        value: "0"                # PLACEHOLDER
+      commission:               # PERCENT of notional: FTMO 0.0014%, half per side
+        shape: pct_notional
+        value: "0.0007"
+        provenance:
+          verified: "2026-11-24"
+          source: "ftmo.com/en/symbols/ (read by the operator in a browser 2026-11-23: Forex $5.000; XAGUSD, XAUUSD 0.0014%; indices incl. US100.cash, US500.cash 0.000%), charged HALF PER SIDE as confirmed by FTMO-Demo trial deal history 2026-11-23 (0.01 lots) and 2026-11-24 (1.00 lots), read with read_deal_commissions.py; docs/state.md, 3c.4"
       fallback_spread: "0.16"     # PLACEHOLDER
       spread_correction:          # validated 3c.2; values come from a fitted table
         form: points
@@ -156,9 +169,12 @@ cost_profile:
         shape: spread_multiple
         value: "0.5"
     XAGUSD:
-      commission:
-        shape: per_lot_per_side   # UNVERIFIED
-        value: "0"                # PLACEHOLDER
+      commission:               # PERCENT of notional: FTMO 0.0014%, half per side
+        shape: pct_notional
+        value: "0.0007"
+        provenance:
+          verified: "2026-11-24"
+          source: "ftmo.com/en/symbols/ (read by the operator in a browser 2026-11-23: Forex $5.000; XAGUSD, XAUUSD 0.0014%; indices incl. US100.cash, US500.cash 0.000%), charged HALF PER SIDE as confirmed by FTMO-Demo trial deal history 2026-11-23 (0.01 lots) and 2026-11-24 (1.00 lots), read with read_deal_commissions.py; docs/state.md, 3c.4"
       fallback_spread: "0.019"    # PLACEHOLDER
       spread_correction:          # validated 3c.2; values come from a fitted table
         form: percentage

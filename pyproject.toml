@@ -43,6 +43,7 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "DTZ", "PT", "RET", "SIM", "
 "check_margin_mode.py" = ["N813"]
 "check_chart_mode.py" = ["N813"]
 "extract_mt5_ticks.py" = ["N813"]
+"read_deal_commissions.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

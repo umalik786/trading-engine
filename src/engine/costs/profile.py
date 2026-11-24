@@ -44,6 +44,8 @@ Weekday = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 
 # Swap rates are revised by brokers far more often than rulebooks change.
 FINANCING_STALE_AFTER_DAYS = 30
+# Commission schedules change far less often than swaps; the general default.
+COMMISSION_STALE_AFTER_DAYS = DEFAULT_STALE_AFTER_DAYS
 
 WEEKDAY_NUMBERS = {
     "Monday": 0,
@@ -150,10 +152,20 @@ class Commission(BaseModel):
     - `pct_notional`         -- `value` PERCENT of notional
       (lots x contract_size x fill price). A value of "0.01" means 0.01%,
       not 1%.
+
+    `provenance` is per entry (operator, 2026-11-23): each instrument's rate
+    has its own source and date, and the load warns when either is missing
+    or the date is stale. Unknown keys are refused, so a misspelt
+    `provenance` cannot be silently ignored.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     shape: CommissionShape
     value: Decimal = Field(ge=0)
+    provenance: Provenance = Field(
+        default_factory=lambda: Provenance(stale_after_days=COMMISSION_STALE_AFTER_DAYS)
+    )
 
 
 class SwapRates(BaseModel):
@@ -349,4 +361,6 @@ def load_cost_profile(path: Path, stale_after_days: int = DEFAULT_STALE_AFTER_DA
         profile.financing.provenance.warn_if_stale(f"{profile.profile} financing")
     if profile.server_clock is not None:
         profile.server_clock.provenance.warn_if_stale(f"{profile.profile} server clock")
+    for symbol, costs in profile.instruments.items():
+        costs.commission.provenance.warn_if_stale(f"{profile.profile} {symbol} commission")
     return profile

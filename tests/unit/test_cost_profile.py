@@ -111,9 +111,10 @@ class TestShippedProfiles:
 
     def test_the_ftmo_financing_section_is_verified_unlike_the_rest(self) -> None:
         """The reason provenance is per section: these swap values were
-        read from symbol_info() on a known date, while commission is still a
-        placeholder. One date for the whole file would have to mislabel one
-        or the other. Re-read 2026-11-17 on a fresh FTMO trial."""
+        read from symbol_info() on a known date, the commission on another
+        (2026-11-24, per instrument), and the fallback spreads are still
+        placeholders. One date for the whole file would have to mislabel some
+        of them. Swaps re-read 2026-11-17 on a fresh FTMO trial."""
         with pytest.warns(UserWarning, match="verification is incomplete"):
             profile = load_cost_profile(FTMO_PROFILE)
 
@@ -386,3 +387,149 @@ class TestOpenEndedDateRange:
         assert r.contains(date(2022, 1, 1))
         assert r.contains(date(2099, 12, 31))
         assert not r.contains(date(2021, 12, 31))
+
+
+# --- commission provenance (operator decision 2026-11-23) --------------------
+# Each commission entry carries its own date and source and warns when either is
+# missing or the date is stale, like financing. Before this, a `provenance`
+# key under commission would have been silently ignored.
+
+
+def _profile_file(tmp_path: Path, commission: str) -> Path:
+    path = tmp_path / "profile.yaml"
+    path.write_text(
+        "cost_profile:\n"
+        "  profile: provenance_test\n"
+        "  rules_verified: null\n"
+        "  rules_source: null\n"
+        "  price_basis: bid\n"
+        "  financing:\n"
+        "    instruments:\n"
+        "      XAUUSD: {shape: disabled}\n"
+        "  instruments:\n"
+        "    XAUUSD:\n"
+        f"      commission: {commission}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _commission_warnings(path: Path) -> list[str]:
+    import warnings  # noqa: PLC0415
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_cost_profile(path)
+    return [str(w.message) for w in caught if "commission" in str(w.message)]
+
+
+class TestCommissionProvenance:
+    def test_a_commission_without_provenance_warns_naming_its_instrument(self, tmp_path) -> None:
+        path = _profile_file(tmp_path, '{shape: per_lot_per_side, value: "1"}')
+        (message,) = _commission_warnings(path)
+        assert message.startswith("provenance_test XAUUSD commission: verification")
+
+    def test_a_recently_verified_commission_does_not_warn(self, tmp_path) -> None:
+        from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+        recent = (datetime.now(UTC).date() - timedelta(days=10)).isoformat()
+        path = _profile_file(
+            tmp_path,
+            '{shape: per_lot_per_side, value: "1", '
+            f'provenance: {{verified: "{recent}", source: "deal history"}}}}',
+        )
+        assert _commission_warnings(path) == []
+
+    def test_a_stale_commission_warns(self, tmp_path) -> None:
+        path = _profile_file(
+            tmp_path,
+            '{shape: per_lot_per_side, value: "1", '
+            'provenance: {verified: "2020-01-01", source: "deal history"}}',
+        )
+        (message,) = _commission_warnings(path)
+        assert "XAUUSD commission: verified 2020-01-01" in message
+
+    def test_commission_staleness_defaults_to_90_days(self) -> None:
+        from engine.costs.profile import Commission  # noqa: PLC0415
+
+        commission = Commission.model_validate({"shape": "per_lot_per_side", "value": "1"})
+        assert commission.provenance.stale_after_days == 90
+
+    def test_a_misspelt_key_under_commission_is_refused(self) -> None:
+        from engine.costs.profile import Commission  # noqa: PLC0415
+
+        with pytest.raises(ValidationError):
+            Commission.model_validate(
+                {"shape": "per_lot_per_side", "value": "1", "provenence": {"source": "x"}}
+            )
+
+
+# --- the FTMO commission, verified 2026-11-24 ---------------------------------
+# Venue: FTMO's symbols page (Forex $5.000; XAUUSD, XAGUSD 0.0014%; indices
+# 0.000%), confirmed by trial-account deal history to be charged HALF PER SIDE.
+
+
+def _ftmo() -> CostProfile:
+    import warnings  # noqa: PLC0415
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return load_cost_profile(FTMO_PROFILE)
+
+
+@pytest.mark.parametrize(
+    ("symbol", "shape", "value"),
+    [
+        ("EURUSD", "per_lot_per_side", Decimal("2.50")),
+        ("XAUUSD", "pct_notional", Decimal("0.0007")),
+        ("XAGUSD", "pct_notional", Decimal("0.0007")),
+        ("NAS100", "per_lot_per_side", Decimal(0)),
+        ("US500", "per_lot_per_side", Decimal(0)),
+    ],
+)
+def test_the_ftmo_commission_is_the_verified_venue_rate(symbol, shape, value) -> None:
+    commission = _ftmo().instruments[symbol].commission
+    assert (commission.shape, commission.value) == (shape, value)
+    assert commission.provenance.verified == date(2026, 11, 24)
+    assert "ftmo.com/en/symbols" in commission.provenance.source
+
+
+@pytest.mark.parametrize(
+    ("symbol", "price", "expected"),
+    [
+        # The 2026-11-24 1.00-lot deals, at their own prices. EXACT, not rounded
+        # to the cent as MT5 rounds them (operator decision 2026-11-23): MT5
+        # showed -2.50, -1.43, -2.50.
+        ("EURUSD", "1.09699", Decimal("2.50")),
+        ("XAUUSD", "3567.85", Decimal("2.497495")),  # 1 x 100 x 3567.85 x 0.0007%
+        ("XAGUSD", "40.985", Decimal("1.434475")),  # 1 x 5000 x 40.985 x 0.0007%
+        ("NAS100", "25973.68", Decimal(0)),
+    ],
+)
+def test_ftmo_commission_on_one_lot_matches_the_deal_history_exactly(
+    symbol, price, expected
+) -> None:
+    from engine.core.instruments import load_instrument_specs  # noqa: PLC0415
+    from engine.core.types import Order  # noqa: PLC0415
+    from engine.costs.configured import ConfiguredCostModel  # noqa: PLC0415
+
+    profile = _ftmo()
+    # The fee arithmetic needs no spread-correction table; drop the methods.
+    no_correction = {
+        s: c.model_copy(update={"spread_correction": None}) for s, c in profile.instruments.items()
+    }
+    model = ConfiguredCostModel(
+        profile.model_copy(update={"instruments": no_correction}),
+        load_instrument_specs(REPO_ROOT / "config" / "instruments.yaml"),
+    )
+    order = Order(
+        client_order_id="c",
+        symbol=symbol,
+        side="buy",
+        quantity=Decimal(1),
+        order_type="market",
+        limit_price=None,
+        stop_price=None,
+        intent_id="i",
+    )
+    assert model.fees(order, Decimal(price)) == expected

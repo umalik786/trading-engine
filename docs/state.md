@@ -24,8 +24,10 @@ Phase 2 complete 2026-09-30.
    runs); break 8 exposed a harness defect (deciding bar not per symbol), fixed with
    operator decisions; all eleven breaks exact on the re-run. Record under 3c.3.
 
-**Next: 3c.4, the phase 3 exit** (everything on together, spec §9; operator hand
-figures for both strategies). Then the rest of Next below.
+**Next: 3c.4, the phase 3 exit** -- decisions below under "3c.4". The FTMO commission is
+verified and applied (2026-11-24; awaiting operator review and commit). Then the 3c.4
+build: table check, guard and week search, basket strategy and per-instrument P&L, the
+operator's inputs. Then the rest of Next below.
 
 ## Session 2026-11-17 in brief
 
@@ -1455,6 +1457,119 @@ deferred to 3c.2; the spread-table method is decided.
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
 
+### 3c.4 phase 3 exit — decisions 2026-11-23, blocked on commission
+
+**Decisions (operator, 2026-11-23), on the proposal of the same day:**
+1. **Commission, option (a): verify from the venue before 3c.4.** Third-party sources
+   contradict each other. FTMO's own pages (read 2026-11-23: /en/symbols/, /en/faq/ and
+   its fee, account-specification and account-comparison answers, /en/trading-platforms/,
+   the trading-updates archive and its 2026-11-19 post) state **no commission rate**; the
+   symbols page's spec table renders client-side and was not readable by fetch. So the
+   evidence is the trial account's own deal history, read back with
+   `read_deal_commissions.py` (read only). Profile updated with provenance;
+   `pct_notional` if the rate turns out percentage-based.
+2. **Table:** a real fitted table, cutoff 2025-01-01, checked against the validated fit
+   to end-2024 before use, copied into the golden fixtures with provenance.
+3. **Instruments:** XAGUSD (percentage correction), EURUSD (genuine zeros), NAS100
+   (Friday triple, contract 1, daily close), merged into one run.
+4. **Weights only** (no stops); the 3c.3 sizing file reused (its risk fraction is unused
+   by weight targets). `config/sizing.yaml` left for phase 4.
+5. **A basket reference strategy and a per-instrument P&L breakdown** in the run result.
+6. **Six breaks:** wrong-symbol correction row; wrong-instrument swap settings; wrong
+   contract size in sizing; balance instead of equity; percentage not rounded up;
+   genuine zero treated as missing.
+- **The same-timestamp processing order is stated explicitly in the operator's inputs.**
+
+**Commission evidence so far** (deal history, FTMO-Demo trial, 2026-11-23 07:47-07:48
+UTC, 0.01 lots, one long round trip each, placed by the operator before the trade list
+was given): XAUUSD -0.03 on the opening deal and -0.03 on the closing deal; EURUSD -0.03
+/ -0.03; XAGUSD -0.01 / -0.01; US100.cash 0 / 0; US500.cash not traded. Commission is
+charged **on both deals (per side)**. At 0.01 lots MT5 reports cents, so these resolve a
+per-lot rate only to about 1.00 (-0.03 per 0.01 lots is anywhere from 2.50 to 3.49 per
+lot). Not enough to set the profile.
+
+**Venue source (operator, read in a browser 2026-11-23; screenshots in the session):**
+FTMO's symbols page, https://ftmo.com/en/symbols/ (its specification table renders
+client-side, so it could not be fetched by script). It states commission:
+**Forex $5.000; Commodities XAGUSD and XAUUSD 0.0014%; Indices, including US100.cash
+and US500.cash, 0.000%.** The page does **not** say whether these are per side or per
+round trip, nor (for Forex) per what unit -- read as per lot.
+
+**Deal evidence against it** (the 0.01-lot round trips above): every rate fits
+**half the stated rate charged on each side**, and the full rate per side does not:
+| 0.01 lots | half per side | full per side | observed, each side |
+|---|---|---|---|
+| EURUSD | 2.50 x 0.01 = 0.025 | 0.05 | -0.03 |
+| XAUUSD | 0.0007% x 0.01 x 100 x 3625.96 = 0.0254 | 0.0508 | -0.03 |
+| XAGUSD | 0.0007% x 0.01 x 5000 x 42.727 = 0.01495 | 0.0299 | -0.01 |
+| US100.cash | 0 | 0 | 0 |
+
+**"Half per side" -- CONFIRMED 2026-11-24 for forex and metals** (record below); it was
+an inference until then, pending the 1.00-lot trades. At 0.01 lots MT5's cents rounding cannot
+separate it from nearby rates (e.g. gold at a flat 2.50 per lot per side would also
+show -0.03). The deals also show MT5 rounding each deal's commission to the cent:
+EURUSD 0.025 -> 0.03 and XAGUSD 0.01495 -> 0.01. **Correction (operator, 2026-11-23):**
+an earlier line here gave XAGUSD's figure as 0.0150; it is 0.01495
+(42.727 x 5000 x 0.01 x 0.000007), which is why it showed -0.01 -- evidence for
+rounding to the NEAREST cent rather than against the trader (against the trader would
+have shown -0.02).
+
+**Proposed profile values (NOT applied; awaiting confirmation):** EURUSD
+`per_lot_per_side` 2.50; XAUUSD and XAGUSD `pct_notional` 0.0007 (percent, per fill);
+NAS100 and US500 0, now a stated venue value rather than a placeholder.
+
+**Decisions (operator, 2026-11-23), for when the values are applied:**
+1. **Each commission entry gets its own provenance** (date and source) **with a
+   staleness warning, like financing.** Built test-first when the values are applied.
+2. **Commission stays exact in the engine** (no rounding). Recorded: MT5 rounds each
+   deal's commission to the **nearest cent, half up** (0.025 -> 0.03; 0.01495 -> 0.01).
+   The engine therefore differs from the venue by under a cent per fill; see the
+   phase 7 note.
+
+**Confirmation trades, 2026-11-24 16:00-16:02 UTC (FTMO-Demo trial), read with
+`read_deal_commissions.py --day 2026-11-24`. Every deal matched its written prediction
+at its own price:**
+| deal | price | predicted per side | observed |
+|---|---|---|---|
+| EURUSD 1.00 buy, open / close | 1.09699 / 1.09691 | -2.50 / -2.50 | -2.5 / -2.5 |
+| EURUSD 1.00 sell, open / close | 1.09701 / 1.09697 | -2.50 / -2.50 | -2.5 / -2.5 |
+| XAUUSD 1.00 buy, open / close | 3567.85 / 3569.08 | 2.4975 -> -2.50 / 2.4984 -> -2.50 | -2.5 / -2.5 |
+| XAGUSD 1.00 buy, open / close | 40.985 / 40.949 | 1.4345 -> -1.43 / 1.4332 -> -1.43 | -1.43 / -1.43 |
+| US100.cash 0.01 buy, open / close | 25973.68 / 25989.13 | 0 / 0 | 0 / 0 |
+- **Half per side confirmed for forex** ($5.000 -> 2.50 on each deal, buy and sell, at
+  1 lot) **and metals** (silver 1.43 per deal = 0.0007% of its 204,925 notional; the
+  full 0.0014% would be 2.87).
+- **Gold did not discriminate today:** at 3567 (below ~3593) a flat 2.50 per lot and
+  0.0007% of notional give the same cents. Silver settles the percentage form for
+  metals, with the venue page stating a percentage for both.
+- **US500.cash was not traded:** the planned 0.01-lot index round trip was placed on
+  US100.cash. US500's zero rests on the venue page alone, and its provenance says so.
+
+**Applied 2026-11-24 (operator: apply if every deal matches), test-first:**
+- `config/cost_ftmo_demo.yaml`: EURUSD `per_lot_per_side` 2.50; XAUUSD and XAGUSD
+  `pct_notional` 0.0007; NAS100 and US500 0. Each entry carries `provenance`
+  (verified 2026-11-24; source: the symbols page plus the deal history).
+- `Commission` gains `provenance` (default staleness **90 days** -- Claude's choice,
+  the project default; financing uses 30 -- flagged to the operator) and refuses
+  unknown keys (a misspelt `provenance` was previously ignored silently). The loader
+  warns per instrument ("<profile> <symbol> commission: ...").
+- Tests: 13 new; 12 failed first for the intended reason, after a helper mistake
+  (the test profile's name contained "commission", so the profile-wide warning
+  matched the filter) was fixed before any code. Two passed before code: "a recently
+  verified commission does not warn" (nothing warned yet -- shown failing by break i)
+  and NAS100's zero fee (zero before and after; it pins the venue's zero).
+  `test_ftmo_commission_on_one_lot_matches_the_deal_history_exactly` asserts the
+  engine's EXACT figures at the deal prices (2.497495 and 1.434475, where MT5 showed
+  -2.50 and -1.43), per decision 2.
+- Breaks, predicted first, all exact: (i) commission always warns -> 2 failures;
+  (ii) loader skips commission -> 2; (iii) unknown keys accepted -> 1.
+
+**Held (from 2026-11-23, now released by the confirmation):** the rest of 3c.4 waited
+for the 1.00-lot confirmation trades (planned for the evening of 2026-11-23: 1.00 lot buy-and-close on
+EURUSD, XAUUSD, XAGUSD; 1.00 lot sell-and-close on EURUSD; 0.01 lot buy-and-close on
+US500.cash). Predicted per side: EURUSD -2.50 on all four deals; XAUUSD 0.0007 x price
+(-2.54 at 3625.96); XAGUSD 0.035 x price (-1.50 at 42.727); US500.cash 0.
+
 ### 3c.3 sizer — COMPLETE 2026-11-23
 
 **Decisions (operator, 2026-11-23), on the proposal of the same day:**
@@ -1691,6 +1806,11 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
 - **Live wiring must call the spread-correction table's staleness check** (60 days;
   added 2026-11-20). The check exists from 3c.2. Nothing live exists yet to call it.
 
+- **Orchestrator design: mark every bar sharing a close time before any strategy
+  decision** (operator, added 2026-11-23, 3c.4). Today the harness processes bars with
+  the same timestamp one symbol at a time, so a decision on the first symbol's bar sees
+  the other symbols' previous marks; results then depend on symbol order. The
+  orchestrator must mark all bars of a timestamp first, then decide.
 - **Orchestrator design: the deciding bar is per symbol** (added 2026-11-23, 3c.3).
   The real orchestrator must size each target from the latest bar of the TARGET's
   symbol, not the bar being processed; a target for a symbol with no bar yet waits
@@ -1713,6 +1833,15 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
   its quarter, is equally causal and more faithful. Design it in phase 5, not now. The
   3c.2 cutoff refusal already allows it: each quarter's bars are costed by a table
   whose cutoff is at or before that quarter's start.
+
+## Phase 7 notes
+
+- **Commission reconciliation against the venue** (operator, 2026-11-23). The engine
+  charges commission exactly; MT5 rounds each deal's commission to the nearest cent,
+  half up. Reconciling engine fills against the broker's deal history must therefore
+  allow up to half a cent per deal on commission (and say so in the report), rather
+  than treating it as a mismatch -- or round the engine's figure the same way before
+  comparing. Decide which in phase 7.
 
 ## Carried-forward gaps (not blocking)
 

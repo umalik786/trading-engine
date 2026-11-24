@@ -24,10 +24,34 @@ Phase 2 complete 2026-09-30.
    runs); break 8 exposed a harness defect (deciding bar not per symbol), fixed with
    operator decisions; all eleven breaks exact on the re-run. Record under 3c.3.
 
-**Next: 3c.4, the phase 3 exit** -- decisions below under "3c.4". The FTMO commission is
-verified and applied (2026-11-24; awaiting operator review and commit). Then the 3c.4
-build: table check, guard and week search, basket strategy and per-instrument P&L, the
-operator's inputs. Then the rest of Next below.
+6. ~~FTMO commission~~ — **verified from the venue and applied, committed 2026-11-24**
+   (7825340). Record under 3c.4.
+
+**Next: the 3c.4 build** (decisions below under "3c.4"), in this order:
+1. **Fit the real spread-correction table with cutoff 2025-01-01**
+   (`fit_spread_correction.py --fit-until 2025-01-01`) and **check it against the
+   validated fit to end-2024** (`docs/results/`) before using it.
+2. The guard test and the week search; the basket reference strategy and the
+   per-instrument P&L breakdown (tests first).
+3. The operator's inputs (including the same-timestamp processing order), held breaks.
+Then the rest of Next below.
+
+## Data recovery (checked 2026-11-24)
+
+- **Restore market data from `G:\My Drive	rading-data-backup6-11-20`.** It matches
+  `C:	rading\dataaw` exactly -- all five instruments, every folder (M1, M15, H1, H4,
+  ticks, ticks_monthly), same file count and total bytes, and every file the same name
+  and size -- checked 2026-11-24 **by names and sizes, not contents.** It also holds
+  `mt5-verification-2026-11-17.json`, compared byte for byte: identical.
+- **Earlier folders are superseded:** `2026-11-17` predates fix (a) (its M15/H1/H4 files
+  differ by a few dozen bytes per folder) and has no M1 or ticks_monthly;
+  `2026-11-17b` has no M1 or ticks_monthly; `2026-11-17c` has no ticks_monthly.
+- **`C:	rading\data\derived\` is not backed up**, deliberately: it is regenerable from
+  the raw data with `fit_spread_correction.py --fit-until <date>`. Tables used by tests
+  are committed as fixtures with their provenance.
+- **Before any laptop handover: run a full content check** of the latest backup against
+  local (read every file on both sides and compare, about 2.8 GB from Drive), not only
+  names and sizes.
 
 ## Session 2026-11-17 in brief
 

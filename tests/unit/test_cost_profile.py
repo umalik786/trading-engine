@@ -532,4 +532,4 @@ def test_ftmo_commission_on_one_lot_matches_the_deal_history_exactly(
         stop_price=None,
         intent_id="i",
     )
-    assert model.fees(order, Decimal(price)) == expected
+    assert model.fees(order, Decimal(price), Decimal(1)) == expected

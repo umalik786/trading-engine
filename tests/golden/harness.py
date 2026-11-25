@@ -34,8 +34,11 @@ WHAT ONE BAR DOES, in order
   5. mark the portfolio to this bar's close, asking the cost model what a
      long and a short could each exit at
   6. ask the strategy for its target positions
-  7. pass each target through the sizer, with the deciding bar, the
-     committed quantity (held plus ordered) and the instrument spec
+  7. ask the position book whether the target is held -- a weight target
+     identical to the one that sized the position, while lots are held or
+     ordered (PC.2) -- and if not, pass it through the sizer, with the
+     deciding bar, the committed quantity (held plus ordered) and the
+     instrument spec
   8. ask the position book (PC.1, spec §2.10) for the orders that move
      held-plus-pending lots to the sized target, under the run's position
      mode, and queue them for the next bar. Netting: one order for the
@@ -189,7 +192,7 @@ class BacktestResult:
         return "\n".join(lines)
 
 
-def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by design
+def run_backtest(  # noqa: PLR0912, PLR0913, PLR0915 -- one argument per component; one loop, deleted at orchestrator design
     bars: Sequence[Bar],
     strategy: Strategy,
     *,
@@ -270,12 +273,16 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
                 )
                 stops.pop(target.symbol, None)
                 continue
+            committed = _committed(portfolio, broker.pending_orders(), target.symbol)
+            if book.holds(target, committed):
+                continue  # identical to the target that sized it (PC.2, decision 2)
             context = SizingContext(
                 bar=latest_bar[target.symbol],
-                committed=_committed(portfolio, broker.pending_orders(), target.symbol),
+                committed=committed,
                 spec=specs.get(target.symbol),
             )
             sized = sizing.size(target, portfolio, snapshot, context)
+            book.record_sizing(target)
             if target.stop_price is not None and sized != 0:
                 stops[target.symbol] = target.stop_price
             else:

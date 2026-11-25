@@ -54,6 +54,7 @@ class ZeroCostModel:
         self,
         order: Order,  # noqa: ARG002
         fill_price: Decimal,  # noqa: ARG002
+        opening_quantity: Decimal,  # noqa: ARG002
     ) -> Decimal:
         return Decimal(0)
 

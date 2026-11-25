@@ -198,14 +198,14 @@ class TestCommissionShapes:
     def test_per_lot_per_side_charges_per_lot(self) -> None:
         model = _model(shape="per_lot_per_side", value="3.50")
 
-        assert model.fees(_order(quantity="1"), Decimal("2000.00")) == Decimal("3.50")
-        assert model.fees(_order(quantity="2"), Decimal("2000.00")) == Decimal("7.00")
+        assert model.fees(_order(quantity="1"), Decimal("2000.00"), Decimal("1")) == Decimal("3.50")
+        assert model.fees(_order(quantity="2"), Decimal("2000.00"), Decimal("2")) == Decimal("7.00")
 
     def test_per_lot_per_side_charges_a_sell_the_same_as_a_buy(self) -> None:
         model = _model(shape="per_lot_per_side", value="3.50")
 
-        buy = model.fees(_order("buy", "1"), Decimal("2000.00"))
-        sell = model.fees(_order("sell", "1"), Decimal("2000.00"))
+        buy = model.fees(_order("buy", "1"), Decimal("2000.00"), Decimal("1"))
+        sell = model.fees(_order("sell", "1"), Decimal("2000.00"), Decimal("1"))
         assert buy == sell == Decimal("3.50")
 
     def test_per_lot_round_turn_charges_the_whole_round_turn_at_the_fill(self) -> None:
@@ -213,30 +213,80 @@ class TestCommissionShapes:
         cost is taken at entry rather than split across two fills."""
         model = _model(shape="per_lot_round_turn", value="7.00")
 
-        assert model.fees(_order(quantity="1"), Decimal("2000.00")) == Decimal("7.00")
-        assert model.fees(_order(quantity="3"), Decimal("2000.00")) == Decimal("21.00")
+        assert model.fees(_order(quantity="1"), Decimal("2000.00"), Decimal("1")) == Decimal("7.00")
+        assert model.fees(_order(quantity="3"), Decimal("2000.00"), Decimal("3")) == Decimal(
+            "21.00"
+        )
 
     def test_pct_notional_is_a_percentage_of_lots_times_contract_size_times_price(self) -> None:
         model = _model(shape="pct_notional", value="0.01")
 
         # notional = 1 x 100 x 2000.00 = 200000.00; 0.01% of that = 20.00
-        assert model.fees(_order(quantity="1"), Decimal("2000.00")) == Decimal("20.00")
+        assert model.fees(_order(quantity="1"), Decimal("2000.00"), Decimal("1")) == Decimal(
+            "20.00"
+        )
 
     def test_pct_notional_scales_with_price(self) -> None:
         model = _model(shape="pct_notional", value="0.01")
 
         # notional = 1 x 100 x 4000.00 = 400000.00; 0.01% = 40.00
-        assert model.fees(_order(quantity="1"), Decimal("4000.00")) == Decimal("40.00")
+        assert model.fees(_order(quantity="1"), Decimal("4000.00"), Decimal("1")) == Decimal(
+            "40.00"
+        )
 
     def test_commission_is_charged_on_absolute_size(self) -> None:
         """Order quantities are magnitudes, but a negative one must not
         produce a negative fee -- a rebate nobody granted."""
         model = _model(shape="per_lot_per_side", value="3.50")
 
-        assert model.fees(_order(quantity="-2"), Decimal("2000.00")) == Decimal("7.00")
+        assert model.fees(_order(quantity="-2"), Decimal("2000.00"), Decimal("2")) == Decimal(
+            "7.00"
+        )
 
     def test_zero_commission_is_zero(self) -> None:
-        assert _model(value="0").fees(_order(), Decimal("2000.00")) == Decimal(0)
+        assert _model(value="0").fees(_order(), Decimal("2000.00"), Decimal("1")) == Decimal(0)
+
+
+class TestOpeningQuantity:
+    """Spec v3.12, §2.8 (PC.2): the broker says how much of a fill opens a
+    position. A round turn is one charge for the way in AND the way out, so
+    it is paid on the opening part only; the other shapes charge every lot,
+    opening or closing."""
+
+    def test_a_round_turn_is_not_charged_again_on_a_close(self) -> None:
+        model = _model(shape="per_lot_round_turn", value="7.00")
+        assert model.fees(_order("sell", "1"), Decimal("2000.00"), Decimal(0)) == Decimal(0)
+
+    def test_a_round_turn_is_charged_on_the_opening_part_of_a_flip(self) -> None:
+        """A netting flip: 0.50 lots sold against 0.30 held closes 0.30 and
+        opens 0.20 short. 0.20 x 7.00 = 1.40."""
+        model = _model(shape="per_lot_round_turn", value="7.00")
+        fee = model.fees(_order("sell", "0.50"), Decimal("2000.00"), Decimal("0.20"))
+        assert fee == Decimal("1.40")
+
+    def test_per_side_charges_a_close_like_an_open(self) -> None:
+        model = _model(shape="per_lot_per_side", value="3.50")
+        assert model.fees(_order("sell", "1"), Decimal("2000.00"), Decimal(0)) == Decimal("3.50")
+
+    def test_a_percentage_charges_a_close_like_an_open(self) -> None:
+        model = _model(shape="pct_notional", value="0.01")
+        # 1 x 100 x 2000.00 = 200000.00 notional; 0.01% = 20.00, closing or not
+        assert model.fees(_order("sell", "1"), Decimal("2000.00"), Decimal(0)) == Decimal("20.00")
+
+    def test_an_opening_quantity_above_the_order_is_refused(self) -> None:
+        model = _model(shape="per_lot_round_turn", value="7.00")
+        with pytest.raises(ValueError, match="opening_quantity"):
+            model.fees(_order("buy", "0.50"), Decimal("2000.00"), Decimal("0.60"))
+
+    def test_a_negative_opening_quantity_is_refused(self) -> None:
+        model = _model(shape="per_lot_round_turn", value="7.00")
+        with pytest.raises(ValueError, match="opening_quantity"):
+            model.fees(_order("buy", "0.50"), Decimal("2000.00"), Decimal("-0.10"))
+
+    def test_a_float_opening_quantity_is_refused(self) -> None:
+        model = _model(shape="per_lot_round_turn", value="7.00")
+        with pytest.raises(TypeError, match="opening_quantity"):
+            model.fees(_order("buy", "0.50"), Decimal("2000.00"), 0.5)  # type: ignore[arg-type]
 
 
 class TestZeroSpreadResolution:

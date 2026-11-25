@@ -287,15 +287,23 @@ class TestLimits:
         assert [n.kind for n in sizer.notes] == ["equity_not_positive"] * 2
 
 
-# --- the hold rule (decision A: weight and stop targets only) -----------------
+# --- no hold rule in the sizer (PC.2; replaces 3c.3 decision A) ---------------
 
 
-class TestHold:
-    def test_a_weight_target_holds_a_same_direction_position(self) -> None:
-        assert _size(_target(weight="1"), committed="0.30") == Decimal("0.30")
+class TestNoHoldInTheSizer:
+    """Position conventions, decision 2 (operator, 2026-11-25): whether a
+    position is held is decided by the position book, which knows the
+    target that sized it (§2.10). The sizer answers "how big" from scratch
+    every time it is asked, whatever is already held. Until PC.2 it held
+    any same-direction position, so a changed weight had no effect."""
 
-    def test_a_stop_target_holds_a_same_direction_position(self) -> None:
-        assert _size(_target(weight="-1", stop="2020"), committed="-0.30") == Decimal("-0.30")
+    def test_a_weight_target_is_sized_afresh_over_a_same_direction_position(self) -> None:
+        target = _target(weight="1")
+        assert _size(target, committed="0.30") == _size(target, committed="0")
+
+    def test_a_stop_target_is_sized_afresh_over_a_same_direction_position(self) -> None:
+        target = _target(weight="-1", stop="2020")
+        assert _size(target, committed="-0.30") == _size(target, committed="0")
 
     def test_a_weight_target_resizes_from_the_opposite_direction(self) -> None:
         assert _size(_target(weight="1"), committed="-0.30") == Decimal("0.50")

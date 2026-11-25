@@ -78,8 +78,17 @@ class CostModel(Protocol):
         """
         ...
 
-    def fees(self, order: Order, fill_price: Decimal) -> Decimal:
-        """Commission and any per-order charge. Positive means charged."""
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:
+        """Commission and any per-order charge. Positive means charged.
+
+        SIGNATURE CHANGED IN SPEC v3.12 (position conventions, PC.2).
+        `opening_quantity` is the unsigned part of the fill that opens or
+        adds to a position; the rest closes. The broker works it out,
+        because only the broker knows what the fill traded against. Per-side
+        and percentage commission charge every lot; `per_lot_round_turn`
+        charges the opening part only, so a close pays nothing and a netting
+        flip pays the round turn on its opening part alone.
+        """
         ...
 
     def financing(

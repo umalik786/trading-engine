@@ -379,3 +379,65 @@ class TestBrokerMode:
         broker, _ = _broker("hedging")
         with pytest.raises(NotImplementedError, match=r"PC.3"):
             broker.submit(_mode_order("buy", "0.10", 0, stop_loss=Decimal("1990.00")))
+
+
+# --- the opening part of each fill (spec v3.12, §2.8; phase PC.2) ------------
+
+
+class _OpeningAsFee(ZeroCostModel):
+    """Charges the opening quantity itself as the fee, so each fill's `fees`
+    shows what the broker said opened."""
+
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:  # noqa: ARG002
+        return opening_quantity
+
+
+def _fee_broker(mode: PositionMode) -> SimBroker:
+    portfolio = Portfolio(
+        starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES, position_mode=mode
+    )
+    return SimBroker(cost_model=_OpeningAsFee(), portfolio=portfolio, position_mode=mode)
+
+
+def _opening_after(mode: PositionMode, held: str, side: str, lots: str) -> Decimal:
+    """Hold `held` lots (signed; one opening order), then fill `side lots`
+    -- naming the ticket under hedging if it reduces -- and return the
+    opening quantity the broker reported for that second fill."""
+    broker = _fee_broker(mode)
+    if Decimal(held) != 0:
+        broker.submit(_mode_order("buy" if Decimal(held) > 0 else "sell", held.lstrip("-"), 0))
+        broker.fill_pending(_next_bar(1))
+    reduces = Decimal(held) != 0 and (Decimal(held) > 0) != (side == "buy")
+    closes = "1" if mode == "hedging" and reduces else None
+    broker.submit(_mode_order(side, lots, 1, closes=closes))
+    (fill,) = broker.fill_pending(_next_bar(2))
+    return fill.fees
+
+
+class TestOpeningQuantityHedging:
+    def test_an_order_naming_no_ticket_opens_all_of_it(self) -> None:
+        assert _opening_after("hedging", "0", "buy", "0.30") == Decimal("0.30")
+
+    def test_an_add_is_a_new_ticket_and_opens_all_of_it(self) -> None:
+        assert _opening_after("hedging", "0.30", "buy", "0.20") == Decimal("0.20")
+
+    def test_a_close_opens_nothing(self) -> None:
+        assert _opening_after("hedging", "0.30", "sell", "0.10") == Decimal(0)
+
+
+class TestOpeningQuantityNetting:
+    def test_from_flat_all_of_it_opens(self) -> None:
+        assert _opening_after("netting", "0", "sell", "0.30") == Decimal("0.30")
+
+    def test_an_add_opens_all_of_it(self) -> None:
+        assert _opening_after("netting", "0.30", "buy", "0.20") == Decimal("0.20")
+
+    def test_a_reduction_opens_nothing(self) -> None:
+        assert _opening_after("netting", "0.30", "sell", "0.10") == Decimal(0)
+
+    def test_an_exact_close_opens_nothing(self) -> None:
+        assert _opening_after("netting", "-0.30", "buy", "0.30") == Decimal(0)
+
+    def test_a_flip_opens_only_the_part_beyond_flat(self) -> None:
+        # 0.30 long, sell 0.50: 0.30 closes, 0.20 opens short
+        assert _opening_after("netting", "0.30", "sell", "0.50") == Decimal("0.20")

@@ -44,7 +44,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 
 from engine.core.portfolio import PortfolioView
-from engine.core.types import Order, PositionMode
+from engine.core.types import Order, PositionMode, TargetPosition
 
 
 class PlanError(RuntimeError):
@@ -64,6 +64,31 @@ class PositionBook:
             )
         self._portfolio = portfolio
         self._position_mode = position_mode
+        # symbol -> (weight, stop) of the weight target that last sized it
+        self._sized_by: dict[str, tuple[Decimal, Decimal | None]] = {}
+
+    def holds(self, target: TargetPosition, committed: Decimal) -> bool:
+        """True if `target` is held as it stands, without asking the sizer
+        (decision 2, §2.10): a WEIGHT target identical in weight and stop to
+        the one that sized this symbol, while lots are held or ordered.
+
+        A changed weight or stop is re-sized from current equity. A quantity
+        target is never held: it states its size, so the plan orders the
+        difference. With nothing committed the target is sized again, as
+        before PC.2 -- a target that sized to nothing may fit once equity
+        grows. (A stop-out consumes its target instead: PC.3.)
+        """
+        if target.weight is None or committed == 0:
+            return False
+        return self._sized_by.get(target.symbol) == (target.weight, target.stop_price)
+
+    def record_sizing(self, target: TargetPosition) -> None:
+        """Remember `target` as the one that sized its symbol. Engine state
+        that a restart must not lose (§5.4): persisted in PC.4."""
+        if target.weight is None:
+            self._sized_by.pop(target.symbol, None)
+        else:
+            self._sized_by[target.symbol] = (target.weight, target.stop_price)
 
     def net_quantity(self, symbol: str) -> Decimal:
         """Signed lots held in `symbol`, under either mode: what strategies,

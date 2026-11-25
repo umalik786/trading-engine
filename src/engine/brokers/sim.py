@@ -52,6 +52,8 @@ which is what §5.3 startup reconciliation is for.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from engine.brokers.base import AccountState, BrokerOrderRef
 from engine.core.portfolio import Portfolio, Position
 from engine.core.types import Bar, Fill, Order, PositionMode
@@ -145,7 +147,7 @@ class SimBroker:
                 symbol=order.symbol,
                 quantity=order.quantity if order.side == "buy" else -order.quantity,
                 price=fill_price,
-                fees=self._cost_model.fees(order, fill_price),
+                fees=self._cost_model.fees(order, fill_price, self._opening_quantity(order)),
                 ts=bar.ts_open,
                 ticket=ticket,
             )
@@ -159,6 +161,22 @@ class SimBroker:
     def position_mode(self) -> PositionMode:
         """What this simulated account does (§2.7, v3.12)."""
         return self._position_mode
+
+    def _opening_quantity(self, order: Order) -> Decimal:
+        """The unsigned part of `order` that opens or adds (§2.8, PC.2),
+        worked out against the book BEFORE the fill.
+
+        Hedging: an order naming no ticket opens all of it; a close opens
+        nothing. Netting: from flat or in the held direction, all of it;
+        against the held direction, only what goes beyond flat (a flip's
+        new position) -- a reduction or an exact close opens nothing.
+        """
+        if self._position_mode == "hedging":
+            return order.quantity if order.closes_ticket is None else Decimal(0)
+        held = self._portfolio.position_quantity(order.symbol)
+        if held == 0 or (held > 0) == (order.side == "buy"):
+            return order.quantity
+        return max(Decimal(0), order.quantity - abs(held))
 
     def _ticket_for(self, order: Order) -> str:
         """The position `order` fills against, refusing what MT5 would refuse.

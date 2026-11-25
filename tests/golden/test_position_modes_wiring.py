@@ -26,6 +26,13 @@ Netting, average cost:
                                                                      total   950
 Same total, as §2.10 requires; the orders differ, and that is the point.
 
+COMMISSION (PC.2). Lots that OPEN: hedging 0.30 + 0.20 + 0.20 (ticket 3)
+= 0.70, every close opening nothing; netting 0.30 + 0.20 + 0.20 (the
+opening part of the 0.30 flip; its other 0.10 closes) = 0.70. Lots traded:
+1.40 under both. So a round turn of 7.00 per lot on the opening part,
+0.70 x 7.00 = 4.90, and a per-side 3.50 on every lot, 1.40 x 3.50 = 4.90,
+both give 950.00 - 4.90 = 945.10, under either mode.
+
 This is one concrete example, not the cross-convention property: that test
 is the operator's (tests/properties/, PC.5).
 """
@@ -39,7 +46,9 @@ from decimal import Decimal
 import pytest
 from harness import run_backtest
 
-from engine.core.types import Bar, PositionMode, TargetPosition
+from engine.core.types import Bar, Order, PositionMode, TargetPosition
+from engine.costs.base import CostModel
+from engine.costs.zero import ZeroCostModel
 
 SYMBOL = "XAUUSD"
 OPENS = ["1990.00", "2000.00", "2010.00", "2020.00", "2015.00", "2012.00", "2005.00"]
@@ -118,12 +127,27 @@ def _bars() -> list[Bar]:
     ]
 
 
-def _run(mode: PositionMode):
+class _RoundTurn(ZeroCostModel):
+    """7.00 per lot, charged once, on the opening part of a fill."""
+
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:  # noqa: ARG002
+        return opening_quantity * Decimal("7.00")
+
+
+class _PerSide(ZeroCostModel):
+    """3.50 per lot on every fill, opening or closing."""
+
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:  # noqa: ARG002
+        return order.quantity * Decimal("3.50")
+
+
+def _run(mode: PositionMode, cost_model: CostModel | None = None):
     return run_backtest(
         _bars(),
         _Scripted(SCRIPT),
         position_mode=mode,
         contract_sizes={SYMBOL: Decimal(100)},
+        cost_model=cost_model,
     )
 
 
@@ -145,3 +169,11 @@ def test_the_total_matches_the_hand_figure(mode: PositionMode) -> None:
 def test_hedging_fills_name_their_tickets() -> None:
     result = _run("hedging")
     assert [f.ticket for f in result.fills] == ["1", "2", "1", "2", "2", "3", "3"]
+
+
+@pytest.mark.parametrize("mode", ["hedging", "netting"])
+@pytest.mark.parametrize("commission", [_RoundTurn, _PerSide], ids=["round_turn", "per_side"])
+def test_commission_is_the_same_under_either_mode(mode: PositionMode, commission: type) -> None:
+    result = _run(mode, commission())
+    assert sum(f.fees for f in result.fills) == Decimal("4.90"), result.describe()
+    assert result.total_pnl == Decimal("945.10"), result.describe()

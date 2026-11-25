@@ -54,7 +54,7 @@ from engine.core.clock import (
 )
 from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import Position
-from engine.core.types import Bar, Order
+from engine.core.types import Bar, Order, require_decimal
 from engine.costs.base import BookSnapshot
 from engine.costs.correction_table import SpreadCorrectionTable
 from engine.costs.profile import CostProfile, InstrumentCosts, ServerClockConfig, SwapRates
@@ -303,24 +303,31 @@ class ConfiguredCostModel:
             return config.value
         return config.value * self.resolved_spread(bar)
 
-    def fees(self, order: Order, fill_price: Decimal) -> Decimal:
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:
         """Commission on one fill, per the profile's configured shape.
 
-        `per_lot_round_turn` charges the full round turn here, at the fill.
-        For the reference strategies that is exactly right, because they
-        only ever enter. A strategy that closes a position would be charged
-        again on the way out, which over-charges: telling an entry from an
-        exit needs position state, and §2.8 hands this method only the
-        order and the price. Resolving it belongs with the position
-        conventions step, which is where open-versus-close becomes
-        explicit. Recorded rather than silently approximated.
+        `opening_quantity` (spec v3.12, PC.2) is the unsigned part of the
+        fill that opens or adds; the broker works it out. A round turn is
+        one charge for the way in and the way out, so `per_lot_round_turn`
+        charges the opening part only: a close pays nothing, and a netting
+        flip pays the round turn on the part that opens the new direction.
+        Per-side and percentage commission charge every lot. Until PC.2 the
+        round turn was charged on every fill, which over-charged any exit.
         """
-        costs = self._costs_for(order.symbol)
+        require_decimal("opening_quantity", opening_quantity)
         lots = abs(order.quantity)
+        if not Decimal(0) <= opening_quantity <= lots:
+            raise ValueError(
+                f"{order.symbol}: opening_quantity {opening_quantity} must lie between 0 and "
+                f"the order's {lots} lots"
+            )
+        costs = self._costs_for(order.symbol)
         shape = costs.commission.shape
         value = costs.commission.value
 
-        if shape in ("per_lot_per_side", "per_lot_round_turn"):
+        if shape == "per_lot_round_turn":
+            return opening_quantity * value
+        if shape == "per_lot_per_side":
             return lots * value
         notional = lots * self._spec_for(order.symbol).contract_size * fill_price
         return notional * value / Decimal(100)

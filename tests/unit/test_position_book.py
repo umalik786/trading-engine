@@ -16,7 +16,7 @@ import pytest
 
 from engine.core.portfolio import Portfolio
 from engine.core.positions import PlanError, PositionBook
-from engine.core.types import Fill, Order, PositionMode
+from engine.core.types import Fill, Order, PositionMode, TargetPosition
 
 SYMBOL = "XAUUSD"
 _TS = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
@@ -190,3 +190,86 @@ class TestBook:
         )
         with pytest.raises(ValueError, match="position mode"):
             PositionBook(portfolio, "netting")
+
+
+# --- rebalancing (decision 2; spec §2.10; phase PC.2) -------------------------
+
+
+def _weight_target(weight: str, stop: str | None = None, reason: str = "r") -> TargetPosition:
+    return TargetPosition(
+        symbol=SYMBOL,
+        quantity=None,
+        weight=Decimal(weight),
+        stop_price=Decimal(stop) if stop else None,
+        take_profit=None,
+        reason=reason,
+        confidence=None,
+    )
+
+
+def _quantity_target(lots: str) -> TargetPosition:
+    return TargetPosition(
+        symbol=SYMBOL,
+        quantity=Decimal(lots),
+        weight=None,
+        stop_price=None,
+        take_profit=None,
+        reason="r",
+        confidence=None,
+    )
+
+
+class TestRebalancing:
+    """A weight target identical to the one that sized the position -- same
+    weight, same stop -- is held while anything is held or ordered; any
+    change is re-sized. A quantity target always plans the difference."""
+
+    def test_nothing_recorded_is_not_held(self) -> None:
+        assert _two_longs().holds(_weight_target("1"), Decimal("0.50")) is False
+
+    def test_the_identical_target_is_held(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_weight_target("1", stop="1990"))
+        assert book.holds(_weight_target("1", stop="1990"), Decimal("0.50")) is True
+
+    def test_only_weight_and_stop_count_toward_identical(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_weight_target("1", reason="first"))
+        assert book.holds(_weight_target("1", reason="restated"), Decimal("0.50")) is True
+
+    def test_a_changed_weight_in_the_same_direction_is_resized(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_weight_target("1"))
+        assert book.holds(_weight_target("0.5"), Decimal("0.50")) is False
+
+    def test_a_changed_stop_is_resized(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_weight_target("1", stop="1990"))
+        assert book.holds(_weight_target("1", stop="1980"), Decimal("0.50")) is False
+
+    def test_the_identical_target_over_nothing_committed_is_sized_again(self) -> None:
+        """A target that sized to nothing (below the volume minimum, say) is
+        asked again on the next bar, as before PC.2: equity may have grown.
+        (A stop-out is different: it consumes its target, PC.3.)"""
+        book = _book("hedging")
+        book.record_sizing(_weight_target("1"))
+        assert book.holds(_weight_target("1"), Decimal(0)) is False
+
+    def test_a_quantity_target_is_never_held(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_quantity_target("0.50"))
+        assert book.holds(_quantity_target("0.50"), Decimal("0.50")) is False
+
+    def test_the_record_is_per_symbol(self) -> None:
+        book = _two_longs()
+        book.record_sizing(_weight_target("1"))
+        other = TargetPosition(
+            symbol="EURUSD",
+            quantity=None,
+            weight=Decimal(1),
+            stop_price=None,
+            take_profit=None,
+            reason="r",
+            confidence=None,
+        )
+        assert book.holds(other, Decimal("0.50")) is False

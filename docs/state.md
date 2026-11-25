@@ -54,7 +54,7 @@ per mode, order plans -> **PC.2** rebalancing, exact exit commission -> **PC.3**
 execution, risk distance, stop-out rules -> **PC.4** persistent store, restartable
 harness -> **PC.5** exit. **Status: PC.0 (spec v3.12) approved by the operator
 2026-11-25. PC.1 approved and committed 2026-11-25** (record below, "PC.1").
-**PC.2 in progress.**
+**PC.2 approved and committed 2026-11-25** (record below, "PC.2").
 
 1. **Position mode lives in a venue config file**, `config/venue_ftmo_demo.yaml`
    (`position_mode: hedging`, with provenance: `margin_mode` 2, 2026-09-29). Also the
@@ -133,6 +133,39 @@ netting flip; store not reloaded on restart).
   PC.4 restart test must include this case: an intent planned as several orders, the
   run stopped between them, restarted, and the saved orders (ids, lots, tickets)
   resubmitted unchanged rather than re-planned.
+
+### PC.2 — rebalancing and exact exit commission (built 2026-11-25)
+
+- **Tests first:** 23 red, each for the right reason (10 "not built yet" from the book's
+  `holds`/`record_sizing`; 13 assertions or missing refusals showing the old behaviour:
+  sizer holding 0.30 where a fresh size is 0.50, round turn charged on a close and on
+  all of a flip, SimBroker reporting the whole order as opening, 9.80 commission for
+  4.90 in the wiring example, a changed weight with no effect). 699 passed after.
+- **Rebalancing (decision 2):** the sizer no longer holds anything (3c.3 decision A
+  retired; its two unit tests rewritten to say so). `PositionBook.holds(target,
+  committed)`: a weight target identical in weight AND stop to the one that sized the
+  symbol is held while lots are held or ordered; any change is re-sized from current
+  equity and the difference planned; a quantity target is never held; with nothing
+  committed the target is sized again (as before -- a stop-out's consumption is PC.3).
+  `record_sizing` keeps (weight, stop) per symbol; persisted in PC.4.
+- **Exit commission:** `fees(order, fill_price, opening_quantity)`. Round turn on the
+  opening part only; per side and percentage on every lot. SimBroker works out the
+  opening part before the fill: hedging, all of an order naming no ticket and none of a
+  close; netting, all from flat or adding, nothing on a reduction or exact close, only
+  the part beyond flat on a flip. Refused: opening quantity negative, above the order,
+  or not a Decimal. Wiring example: 0.70 lots open and 1.40 traded under both modes, so
+  round turn 7.00 and per side 3.50 both cost 4.90; 945.10 under either mode.
+- **Breaks held**, predictions written before any run:
+  (B5) round turn charged on every fill: 2 failures -- the configured model's close and
+  flip tests (7.00 for 0; 3.50 for 1.40). The wiring examples use their own commission
+  doubles and every golden run only enters, so nothing else moves.
+  (B6) netting flip charged on its whole quantity (reductions still 0): 2 -- SimBroker's
+  flip test (0.50 for 0.20) and wiring round_turn under netting (5.60 for 4.90, total
+  944.40); hedging unaffected, so the modes disagree, as the property would show.
+  (B7) the 3c.3 hold rule restored in the sizer: 4 -- both sizer no-hold tests and the
+  rebalancing wiring test under both modes; the moving-equity hold test still passes.
+  (B8) the stop left out of "identical": 1 -- the book's changed-stop test.
+  (B9) holding with nothing committed: 1 -- the book's sized-again test.
 
 ## RESUME HERE (session 2026-11-23)
 
@@ -223,7 +256,9 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
   proportionally (H1): about -2.86/-2.87 single, -8.59 triple, depending on whether it
   halves the exact amount or the cents. H2: all of it on the half-close deal. H3: none
   until the last close. The operator plans the check for the night of 2026-11-25.
-  **Position opened by the operator: 0.10 lots XAGUSD long, ticket 5920.**
+  **Swap-check position: 0.10 lots XAGUSD long, ticket 592177044, opened 2026-11-25**
+  (operator). The first position (recorded earlier as ticket 5920) was closed by
+  mistake before the rollover: ignore it in the check. Predictions unchanged.
 
 ## Next, in order
 

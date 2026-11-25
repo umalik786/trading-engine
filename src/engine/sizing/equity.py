@@ -32,15 +32,15 @@ Arithmetic is exact (fractions), so no rounding enters before step 1's
 deliberate one: a quotient that lands a hair under a step boundary in
 28-digit decimal arithmetic cannot lose a whole step.
 
-THE HOLD RULE -- weight and stop targets only (decision A)
-----------------------------------------------------------
-If the committed position (held plus ordered) is non-zero and in the
-target's direction, it is returned unchanged: the position is sized on entry
-and then held. Otherwise every bar's movement in equity would re-size it, a
-little trade every bar -- rebalancing, which is a decision for the
-position-conventions step. A quantity target is NOT held: it orders the
-difference, exactly as before. Consequence, recorded: changing a weight in
-the same direction has no effect until position conventions are built.
+NO HOLD RULE HERE (PC.2, replacing 3c.3 decision A)
+---------------------------------------------------
+Until PC.2 this sizer returned a same-direction committed position
+unchanged, so a changed weight had no effect. Whether to hold is now the
+position book's decision (`PositionBook.holds`, spec §2.10, operator
+decision 2 of 2026-11-25), because it needs the target that sized the
+position, which a sizer does not know: an identical target is held, a
+changed one is re-sized. This sizer answers "how big" from scratch whenever
+it is asked.
 
 KNOWN UNDERSTATEMENT
 --------------------
@@ -171,8 +171,6 @@ class EquitySizer:
                     f"{target.symbol}: stop {stop} is on the wrong side of the close "
                     f"{close} for a {'long' if direction > 0 else 'short'}"
                 )
-            if context.committed != 0 and _sign(context.committed) == direction:
-                return context.committed  # the hold rule
             equity = portfolio.equity
             if equity <= 0:
                 self._note(context, target, "equity_not_positive", Decimal(0), Decimal(0))

@@ -307,3 +307,75 @@ class TestPositionType:
         del snapshot["XAUUSD"]
 
         assert portfolio.position_quantity("XAUUSD") == Decimal(1)
+
+
+# --- per-symbol P&L (3c.4: the per-instrument breakdown of a basket run) -----
+
+
+class TestPerSymbolPnl:
+    """`realised_pnl_for` and `unrealised_pnl_for` split the two totals by
+    symbol. They add nothing to the accounting: summed over every symbol
+    they must give back `realised_pnl` and `unrealised_pnl` exactly."""
+
+    def _two_symbol_book(self) -> Portfolio:
+        portfolio = _portfolio("100000.00")
+        portfolio.apply_fill(_fill("2", "2000.00", symbol="XAUUSD", fees="7.00"))
+        portfolio.apply_fill(_fill("-1", "1.1000", symbol="EURUSD", fees="2.50"))
+        portfolio.mark("XAUUSD", _exits("2010.00", "2010.30"))
+        portfolio.mark("EURUSD", _exits("1.0990", "1.0992"))
+        return portfolio
+
+    def test_fees_are_realised_against_their_own_symbol(self) -> None:
+        portfolio = self._two_symbol_book()
+
+        assert portfolio.realised_pnl_for("XAUUSD") == Decimal("-7.00")
+        assert portfolio.realised_pnl_for("EURUSD") == Decimal("-2.50")
+
+    def test_unrealised_is_valued_per_symbol_at_its_own_mark(self) -> None:
+        portfolio = self._two_symbol_book()
+
+        # long XAUUSD at its long exit: 2 x 100 x (2010.00 - 2000.00) = 2000.00
+        assert portfolio.unrealised_pnl_for("XAUUSD") == Decimal("2000.00")
+        # short EURUSD at its short exit: -1 x 100000 x (1.0992 - 1.1000) = 80.00
+        assert portfolio.unrealised_pnl_for("EURUSD") == Decimal("80.00")
+
+    def test_the_symbols_sum_to_the_totals_exactly(self) -> None:
+        portfolio = self._two_symbol_book()
+        portfolio.accrue_financing("XAUUSD", Decimal("-11.54"))
+        symbols = ("XAUUSD", "EURUSD")
+
+        assert sum(portfolio.realised_pnl_for(s) for s in symbols) == portfolio.realised_pnl
+        assert sum(portfolio.unrealised_pnl_for(s) for s in symbols) == portfolio.unrealised_pnl
+
+    def test_accrued_financing_belongs_to_its_symbols_unrealised(self) -> None:
+        portfolio = self._two_symbol_book()
+        portfolio.accrue_financing("XAUUSD", Decimal("-11.54"))
+
+        # 2000.00 - 11.54 = 1988.46; EURUSD untouched
+        assert portfolio.unrealised_pnl_for("XAUUSD") == Decimal("1988.46")
+        assert portfolio.unrealised_pnl_for("EURUSD") == Decimal("80.00")
+
+    def test_closing_realises_against_the_closed_symbol_only(self) -> None:
+        portfolio = self._two_symbol_book()
+        portfolio.accrue_financing("XAUUSD", Decimal("-11.54"))
+        portfolio.apply_fill(_fill("-2", "2015.00", symbol="XAUUSD", fees="7.00"))
+
+        # 2 x 100 x (2015.00 - 2000.00) = 3000.00; less 7.00 + 7.00 fees and
+        # the 11.54 financing released on closing: 3000.00 - 14.00 - 11.54
+        assert portfolio.realised_pnl_for("XAUUSD") == Decimal("2974.46")
+        assert portfolio.unrealised_pnl_for("XAUUSD") == Decimal(0)
+        assert portfolio.realised_pnl_for("EURUSD") == Decimal("-2.50")
+
+    def test_a_flip_realises_the_old_leg_against_its_symbol(self) -> None:
+        portfolio = _portfolio()
+        portfolio.apply_fill(_fill("1", "2000.00", symbol="XAUUSD"))
+        portfolio.apply_fill(_fill("-3", "1990.00", symbol="XAUUSD", fees="1.00"))
+
+        # 1 x 100 x (1990.00 - 2000.00) = -1000.00, less 1.00 fee
+        assert portfolio.realised_pnl_for("XAUUSD") == Decimal("-1001.00")
+
+    def test_a_symbol_never_traded_is_zero(self) -> None:
+        portfolio = self._two_symbol_book()
+
+        assert portfolio.realised_pnl_for("NAS100") == Decimal(0)
+        assert portfolio.unrealised_pnl_for("NAS100") == Decimal(0)

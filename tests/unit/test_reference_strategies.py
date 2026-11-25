@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import ClassVar
 
 import pytest
 
@@ -18,6 +19,7 @@ from engine.core.types import Bar, Fill
 from engine.strategies.reference.always_flat import AlwaysFlat
 from engine.strategies.reference.always_long import AlwaysLong
 from engine.strategies.reference.always_short import AlwaysShort
+from engine.strategies.reference.constant_weights import ConstantWeights
 
 SYMBOL = "XAUUSD"
 CONTRACT_SIZES = {SYMBOL: Decimal(100)}
@@ -241,3 +243,75 @@ class TestWeightAndStopOptions:
             cls(SYMBOL, weight=1.0)
         with pytest.raises(TypeError, match="Decimal"):
             cls(SYMBOL, weight=Decimal(1), stop_price=1900.0)
+
+
+# --- ConstantWeights, the basket reference strategy (3c.4) -------------------
+
+
+class TestConstantWeights:
+    """A constant, signed weight in each of several symbols, every bar. The
+    multi-instrument counterpart of AlwaysLong / AlwaysShort: its correct
+    result is each leg's buy-and-hold (or sell-and-hold), so a wrong figure
+    is the engine's, not the strategy's."""
+
+    WEIGHTS: ClassVar[dict[str, Decimal]] = {
+        "XAGUSD": Decimal("1"),
+        "EURUSD": Decimal("-0.5"),
+        "NAS100": Decimal("2"),
+    }
+
+    def test_one_target_per_symbol_in_the_order_given_every_bar(self) -> None:
+        strategy = ConstantWeights(self.WEIGHTS)
+        for index, close in enumerate(["2000", "2100"]):
+            targets = strategy.on_bar(_bar(index, close), {}, _portfolio())
+            assert [t.symbol for t in targets] == ["XAGUSD", "EURUSD", "NAS100"]
+            assert [t.weight for t in targets] == [Decimal("1"), Decimal("-0.5"), Decimal("2")]
+            assert all(t.quantity is None and t.stop_price is None for t in targets)
+
+    def test_targets_are_for_every_symbol_whichever_symbols_bar_arrived(self) -> None:
+        """The bar's own symbol is irrelevant: a basket restates all its legs,
+        even on a bar (here XAUUSD's) of a symbol it does not hold."""
+        targets = ConstantWeights(self.WEIGHTS).on_bar(_bar(0, "2000"), {}, _portfolio())
+        assert {t.symbol for t in targets} == set(self.WEIGHTS)
+        assert SYMBOL not in self.WEIGHTS
+
+    def test_the_targets_do_not_depend_on_what_is_held(self) -> None:
+        strategy = ConstantWeights(self.WEIGHTS)
+        flat = strategy.on_bar(_bar(0, "2000"), {}, _portfolio())
+        held = _portfolio()
+        held.apply_fill(
+            Fill(
+                order_id="o",
+                client_order_id="c",
+                symbol=SYMBOL,
+                quantity=Decimal(3),
+                price=Decimal("2000"),
+                fees=Decimal(0),
+                ts=datetime(2026, 1, 5, tzinfo=UTC),
+            )
+        )
+        assert strategy.on_bar(_bar(1, "2000"), {}, held) == flat
+
+    def test_the_weights_given_are_copied_not_shared(self) -> None:
+        weights = dict(self.WEIGHTS)
+        strategy = ConstantWeights(weights)
+        weights["XAGUSD"] = Decimal("9")
+        (first, *_) = strategy.on_bar(_bar(0, "2000"), {}, _portfolio())
+        assert first.weight == Decimal("1")
+
+    def test_an_empty_basket_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="at least one symbol"):
+            ConstantWeights({})
+
+    def test_a_zero_weight_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="zero weight"):
+            ConstantWeights({"XAGUSD": Decimal(0)})
+
+    def test_floats_are_rejected(self) -> None:
+        with pytest.raises(TypeError, match="Decimal"):
+            ConstantWeights({"XAGUSD": 1.0})
+
+    def test_needs_no_features_and_no_warmup(self) -> None:
+        strategy = ConstantWeights(self.WEIGHTS)
+        assert strategy.required_features == set()
+        assert strategy.warmup_bars == 0

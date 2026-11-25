@@ -27,13 +27,15 @@ Phase 2 complete 2026-09-30.
 6. ~~FTMO commission~~ — **verified from the venue and applied, committed 2026-11-24**
    (7825340). Record under 3c.4.
 
-**Next: the 3c.4 build** (decisions below under "3c.4"), in this order:
-1. **Fit the real spread-correction table with cutoff 2025-01-01**
-   (`fit_spread_correction.py --fit-until 2025-01-01`) and **check it against the
-   validated fit to end-2024** (`docs/results/`) before using it.
-2. The guard test and the week search; the basket reference strategy and the
-   per-instrument P&L breakdown (tests first).
-3. The operator's inputs (including the same-timestamp processing order), held breaks.
+**The 3c.4 build** (decisions below under "3c.4"; build record there, 2026-11-25):
+1. ~~Real table, cutoff 2025-01-01, checked against the validated fit~~ — **done
+   2026-11-25: identical** in every value of all five instruments.
+2. ~~Guard test and week search; basket strategy and per-instrument breakdown~~ —
+   **done 2026-11-25** (tests first). Week: 2026-08-25 21:00 to 2026-08-31 01:00 UTC.
+3. Operator's inputs — **handed over 2026-11-25. NEXT: the operator's 14 figures**
+   (6 lot sizes, 6 leg P&Ls, 2 totals) into `CASES` in
+   `tests/golden/test_phase3_exit_vs_hand_figures.py`; then the six held breaks,
+   predictions written first.
 Then the rest of Next below.
 
 ## Data recovery (checked 2026-11-24)
@@ -1481,7 +1483,47 @@ deferred to 3c.2; the spread-table method is decided.
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
 
-### 3c.4 phase 3 exit — decisions 2026-11-23, blocked on commission
+### 3c.4 phase 3 exit — decisions 2026-11-23; built 2026-11-25, awaiting hand figures
+
+**Build, 2026-11-25** (operator's start instruction of the same day):
+- **Table:** `fit_spread_correction.py --fit-until 2025-01-01` (commit af2a154).
+  Checked against the validated fit to end-2024
+  (`runtime/spread_correction/validation_fit_to_2024_amended.json`, whose report is
+  byte-identical to `docs/results/3c2_validation_amended_2026-11-20.txt`): **every
+  correction identical** for all five instruments in the profile's form and
+  structure (NAS100's fallback hour 0 = the validated constant 40); same input
+  digests; the same fit observations bar by bar. Copied byte for byte to
+  `tests/golden/fixtures/spread_correction_ftmo_fit_until_2025-01-01.json`.
+- **Week search** (prints dates and pass/fail only). No daily window has NAS100
+  closed while XAGUSD trades (same daily break, same Sunday open), so the run starts
+  at the daily break, when only EURUSD trades: EURUSD decides alone, and XAGUSD and
+  NAS100 decide together an hour later, sized from equity including EURUSD's open
+  position. **Requiring XAGUSD's lots to differ between balance and equity was
+  dropped** (4 of 181 starts: a 0.01-lot silver step is ~1,800 USD of equity); the
+  proposal required it of NAS100 only. Two weeks passed every requirement; the first
+  taken: **2026-08-25 21:00 to 2026-08-31 01:00 UTC** (first valid end, by rule).
+  XAGUSD's lots do not move under balance-for-equity in this week (recorded).
+- **Break 6 can move only the short basket:** EURUSD's fill falls in the rollover
+  hour, where its ticks show no zeros, so the long never pays a zero spread.
+- **Same-timestamp processing order: by time, then EURUSD, NAS100, XAGUSD**
+  (alphabetical), via a new harness `merge_bars(series, order)` that refuses an
+  order not naming each symbol exactly once.
+- **Built, tests first:** `ConstantWeights` (signed weight per symbol);
+  `Portfolio.realised_pnl_for` / `unrealised_pnl_for` (a small core addition: the
+  per-symbol marks are private, so the breakdown could not be computed in the
+  harness without duplicating the accounting); `BacktestResult.pnl_by_symbol`;
+  `export_fixture.py` gains a per-window instrument (earlier fixtures re-export
+  byte-identical). Golden test pins the profile, instruments file and table by
+  SHA-256, so fresh swap readings stop it with that message, not a P&L mismatch.
+- **Tests:** 21 new failed first, each for the intended reason, against do-nothing
+  stubs. Six passed before code, each because a stub already gives the expected
+  answer (never-traded symbol zero; targets independent of holdings; no features or
+  warmup; legs sum to total and no-trade run has no legs, both trivially with no
+  trades; the config pin). **Test mistake, fixed:** a wait-note bound of 22:00
+  should be 22:15 (EURUSD's 22:00 bar, closing 22:15, is processed first).
+- **Guard shown failing** (message only, files restored to identical SHA-256): EURUSD
+  last spread non-zero; XAGUSD last spread 0.054 and 0.050 (up = nearest); EURUSD's
+  first four bars removed; `instruments.yaml` touched (pin).
 
 **Decisions (operator, 2026-11-23), on the proposal of the same day:**
 1. **Commission, option (a): verify from the venue before 3c.4.** Third-party sources

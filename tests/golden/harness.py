@@ -83,7 +83,7 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -142,6 +142,10 @@ class BacktestResult:
     # What the sizer capped or declined (3c.3), so it is visible. Into the
     # decision log at orchestrator design.
     sizing_notes: tuple = ()
+    # Each traded symbol's share of total_pnl (3c.4): its realised P&L
+    # (closed lots, released financing, fees) plus its open position at the
+    # last mark. Sums to total_pnl exactly; a symbol never filled is absent.
+    pnl_by_symbol: Mapping[str, Decimal] = field(default_factory=dict)
 
     def describe(self) -> str:
         """A plain-text account of the run, used as the message on a failed
@@ -303,6 +307,10 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
         sizing_notes=tuple(
             sorted([*waits, *getattr(sizing, "notes", ())], key=lambda note: note.ts)
         ),
+        pnl_by_symbol={
+            symbol: portfolio.realised_pnl_for(symbol) + portfolio.unrealised_pnl_for(symbol)
+            for symbol in dict.fromkeys(fill.symbol for fill in fills)
+        },
     )
 
 
@@ -433,6 +441,34 @@ def _net_pending_quantity(orders: Sequence[Order], symbol: str) -> Decimal:
         if order.symbol == symbol:
             total += order.quantity if order.side == "buy" else -order.quantity
     return total
+
+
+def merge_bars(series: Mapping[str, Sequence[Bar]], order: Sequence[str]) -> list[Bar]:
+    """Several instruments' bars as one stream: by bar open, and at a shared
+    open by `order` -- the SAME-TIMESTAMP PROCESSING ORDER, stated by the
+    caller, never left to file or dictionary order (3c.4, operator
+    2026-11-23). It matters: a bar processed first at an instant is marked
+    before the others decide at that instant.
+
+    `order` must name each symbol exactly once. A series must hold only its
+    own symbol's bars, and no instant twice.
+    """
+    if len(set(order)) != len(order) or set(order) != set(series):
+        raise ValueError(
+            f"the processing order {list(order)} must name each of {sorted(series)} exactly once"
+        )
+    for symbol, bars in series.items():
+        strangers = {bar.symbol for bar in bars} - {symbol}
+        if strangers:
+            raise ValueError(f"bars of {sorted(strangers)} filed under {symbol}")
+        opens = [bar.ts_open for bar in bars]
+        if len(set(opens)) != len(opens):
+            raise ValueError(f"{symbol} has a bar opening at the same instant twice")
+    rank = {symbol: index for index, symbol in enumerate(order)}
+    return sorted(
+        (bar for bars in series.values() for bar in bars),
+        key=lambda bar: (bar.ts_open, rank[bar.symbol]),
+    )
 
 
 def load_bars_from_csv(path: Path, symbol: str) -> list[Bar]:

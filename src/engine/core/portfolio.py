@@ -201,6 +201,9 @@ class Portfolio:
         self._positions: dict[str, Position] = {}
         self._marks: dict[str, ExitPrices] = {}
         self._realised_pnl = Decimal(0)
+        # The same realised P&L, split by symbol (3c.4: the per-instrument
+        # breakdown). Every amount booked goes to both, in _realise.
+        self._realised_by_symbol: dict[str, Decimal] = {}
 
     @property
     def starting_balance(self) -> Decimal:
@@ -222,19 +225,30 @@ class Portfolio:
     @property
     def unrealised_pnl(self) -> Decimal:
         """P&L of open positions at their last mark price."""
-        total = Decimal(0)
-        for symbol, position in self._positions.items():
-            exit_price = self._marks[symbol].for_quantity(position.quantity)
-            value_now = position.quantity * exit_price
-            total += (value_now - position.cost) * self._contract_size(symbol)
-            # Accrued financing sits in unrealised, so equity moves the
-            # moment it is charged while balance does not -- which is what
-            # MT5 does, and why the two diverge on a position held for
-            # days. §6.5.3 records which of the two each firm's daily loss
-            # limit watches, so the distinction decides whether financing
-            # counts against the limit yet.
-            total += position.financing_accrued
-        return total
+        return sum((self.unrealised_pnl_for(symbol) for symbol in self._positions), Decimal(0))
+
+    def realised_pnl_for(self, symbol: str) -> Decimal:
+        """The part of `realised_pnl` booked against `symbol`: its closed
+        lots, its released financing and its fees. Zero if never traded."""
+        return self._realised_by_symbol.get(symbol, Decimal(0))
+
+    def unrealised_pnl_for(self, symbol: str) -> Decimal:
+        """The part of `unrealised_pnl` belonging to `symbol`'s open
+        position, at its last mark. Zero if flat."""
+        position = self._positions.get(symbol)
+        if position is None:
+            return Decimal(0)
+        exit_price = self._marks[symbol].for_quantity(position.quantity)
+        value_now = position.quantity * exit_price
+        # Accrued financing sits in unrealised, so equity moves the moment
+        # it is charged while balance does not -- which is what MT5 does,
+        # and why the two diverge on a position held for days. §6.5.3
+        # records which of the two each firm's daily loss limit watches, so
+        # the distinction decides whether financing counts against the
+        # limit yet.
+        return (value_now - position.cost) * self._contract_size(symbol) + (
+            position.financing_accrued
+        )
 
     def position_quantity(self, symbol: str) -> Decimal:
         position = self._positions.get(symbol)
@@ -309,7 +323,7 @@ class Portfolio:
             else:
                 cost_removed = old_cost * closed_lots / abs(old_quantity)
             proceeds = closing_direction * closed_lots * fill.price
-            self._realised_pnl += (proceeds - cost_removed) * contract_size
+            self._realise(fill.symbol, (proceeds - cost_removed) * contract_size)
             # Accrued financing follows the lots it belongs to. The closed
             # share is booked to realised, which is MT5's behaviour: swap
             # sits in the open position until the position closes, then
@@ -320,7 +334,7 @@ class Portfolio:
                 accrued_released = old_accrued
             else:
                 accrued_released = old_accrued * closed_lots / abs(old_quantity)
-            self._realised_pnl += accrued_released
+            self._realise(fill.symbol, accrued_released)
             new_accrued = old_accrued - accrued_released
             # Flipping opens the leftover at this fill's price; otherwise
             # the position keeps exactly the cost that was not removed.
@@ -332,7 +346,7 @@ class Portfolio:
                 opened_at = fill.ts
                 new_accrued = Decimal(0)
 
-        self._realised_pnl -= fill.fees
+        self._realise(fill.symbol, -fill.fees)
         # A provisional mark, so that an open position always has a price
         # to be valued at. It is the fill's own price on both sides, which
         # ignores the spread -- and that is fine only because the engine
@@ -352,6 +366,11 @@ class Portfolio:
                 opened_at=opened_at,
                 financing_accrued=new_accrued,
             )
+
+    def _realise(self, symbol: str, amount: Decimal) -> None:
+        """Book `amount` to realised P&L, in total and against `symbol`."""
+        self._realised_pnl += amount
+        self._realised_by_symbol[symbol] = self.realised_pnl_for(symbol) + amount
 
     def accrue_financing(self, symbol: str, amount: Decimal) -> None:
         """Add overnight financing to an open position, signed.

@@ -1,5 +1,6 @@
 """
-Fixture export — XAUUSD M15 windows, for the phase 2 golden test.
+Fixture export — M15 windows for the golden tests (XAUUSD from phase 2; EURUSD,
+NAS100 and XAGUSD for the phase 3 exit, 3c.4).
 
 Reads bars through `ReplayFeed` and writes them out verbatim to CSVs the
 golden test can load. Touches nothing on disk except the CSVs it writes.
@@ -46,11 +47,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from engine.core.instruments import load_point_sizes
+from engine.core.instruments import load_bars_genuine_from, load_point_sizes
 from engine.core.types import Bar
 from engine.feeds.replay import ReplayFeed
 
-INSTRUMENT = "XAUUSD"
 TIMEFRAME = "M15"
 
 HEADER = ("ts_open", "ts_close", "open", "high", "low", "close", "volume", "spread")
@@ -68,6 +68,8 @@ class Export:
     range_start: datetime
     range_end: datetime
     filename: str
+    # Added for 3c.4; the default keeps every earlier window exactly as it was.
+    instrument: str = "XAUUSD"
 
 
 # Both windows end at the same instant and cover the same week, which
@@ -95,6 +97,21 @@ EXPORTS = (
         range_end=datetime(2025, 2, 12, 0, 0, tzinfo=UTC),
         filename="xauusd_m15_2025-02-05T2145_2025-02-12.csv",
     ),
+    # Phase 3c.4 (the phase 3 exit): one window per instrument over the same
+    # span, merged by the golden test. Chosen by a week search against the
+    # requirements its guard test checks (docs/state.md, 3c.4). The span
+    # starts at the daily break, when EURUSD trades and XAGUSD and NAS100 do
+    # not, so those two files begin an hour later than EURUSD's -- that is
+    # the market, not a gap in the export.
+    *(
+        Export(
+            range_start=datetime(2026, 8, 25, 21, 0, tzinfo=UTC),
+            range_end=datetime(2026, 8, 31, 1, 0, tzinfo=UTC),
+            filename=f"{name.lower()}_m15_2026-08-25T2100_2026-08-31T0100.csv",
+            instrument=name,
+        )
+        for name in ("EURUSD", "NAS100", "XAGUSD")
+    ),
 )
 
 
@@ -119,15 +136,18 @@ def row_for(bar: Bar) -> tuple[str, ...]:
 
 def export_window(spec: Export) -> None:
     print("-" * 70)
-    print(f"{INSTRUMENT} {TIMEFRAME}  {iso_z(spec.range_start)} to {iso_z(spec.range_end)}")
+    print(f"{spec.instrument} {TIMEFRAME}  {iso_z(spec.range_start)} to {iso_z(spec.range_end)}")
     print("-" * 70)
 
     feed = ReplayFeed(
-        instrument=INSTRUMENT,
+        instrument=spec.instrument,
         timeframe=TIMEFRAME,
         range_start=spec.range_start,
         range_end=spec.range_end,
-        point=load_point_sizes(INSTRUMENTS_CONFIG)[INSTRUMENT],
+        point=load_point_sizes(INSTRUMENTS_CONFIG)[spec.instrument],
+        bars_genuine_from=load_bars_genuine_from(INSTRUMENTS_CONFIG)
+        .get(spec.instrument, {})
+        .get(TIMEFRAME),
     )
     rows = [row_for(bar) for bar in feed.stream()]
 

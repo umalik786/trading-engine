@@ -13,8 +13,59 @@ Exit run: the production cost profile and instruments file, a real fitted table
 (cutoff 2025-01-01), EquitySizer, three instruments in one run (EURUSD, NAS100,
 XAGUSD), long and short baskets. **All 14 operator figures matched the engine
 exactly; all six held breaks moved exactly as predicted.** Record under 3c.4.
-**Next: position conventions (netting and hedging)** -- see "Next, in order".
+**Next: position conventions (netting and hedging)** -- see below.
 The RESUME HERE list below is the 3c record, kept for reference.
+
+## POSITION CONVENTIONS — decisions 2026-11-25 (operator), on the proposal of the same day
+
+Sub-steps, one at a time, tests first with stubs, breaks held until the operator's
+figures: **PC.0** spec amendments -> **PC.1** position book, ticket ledger, SimBroker
+per mode, order plans -> **PC.2** rebalancing, exact exit commission -> **PC.3** stop
+execution, risk distance, stop-out rules -> **PC.4** persistent store, restartable
+harness -> **PC.5** exit. **Status: PC.0 (spec v3.12) approved by the operator
+2026-11-25; PC.1 in progress.**
+
+1. **Position mode lives in a venue config file**, `config/venue_ftmo_demo.yaml`
+   (`position_mode: hedging`, with provenance: `margin_mode` 2, 2026-09-29). Also the
+   home for the server-mismatch check (orchestrator Next item).
+2. **Rebalancing (a): re-size when the strategy changes its target.** A target
+   identical to the one that sized the position (same weight, same stop) is held; a
+   changed target is re-sized from current equity and the difference ordered (hedging:
+   a new ticket, or oldest-first closes). Replaces the 3c.3 hold rule's limit.
+3. **Take-profit (a): refused for now.** Likely needed in phase 6; then built with the
+   pessimistic rule (stop and take-profit touched in one bar -> stop first).
+4. **A stop-out consumes its target:** an identical target (symbol, direction, stop)
+   afterwards sizes to 0 with a `stopped_out` note; a changed target re-enters.
+5. **A changed stop moves every open ticket's stop** (MT5's SL/TP modify).
+6. **Risk distance (a): the estimated costs are added** to |close - stop| (entry
+   spread, entry and exit slippage, both commissions, from the deciding bar), and every
+   stopped ticket logs its **overrun** (actual loss minus budget). A gap cannot be bounded.
+7. **Persisted, and the store is built in this step (PC.4):** the intent log (written
+   before submit), the target that sized each symbol, stopped-out targets, ticket ->
+   intent links, `last_reconciled_ts` and the deal ledger. Not persisted: positions,
+   open prices, accrued swap, marks (the broker returns them), close order (derived
+   from tickets' open times, ticket number breaking ties). Risk state stays in phase 4.
+
+**Additions (operator):**
+- **Netting flip under `per_lot_round_turn`:** the closing part pays nothing, the
+  opening part pays the full round turn. A test and a held break in PC.2; the
+  cross-convention equivalence must hold for it.
+- **Gap-fill model kept as proposed and recorded as UNVERIFIED:** a stop whose bar opens
+  beyond it fills at the open (then slippage, rounded against the trader). FTMO's stop
+  fills come from its simulator (§6.5.9); not checked against a real gap.
+- **Partial-close swap check** on the FTMO trial before it expires (about 1 December):
+  steps below, under Blocked.
+- **`tests/properties/` is the operator's.** Claude writes nothing there; the
+  operator writes the cross-convention, restart and no-reused-ID properties in PC.5,
+  with help.
+
+**Exit (PC.5):** the operator's cross-convention property test; hand figures for a
+`ScriptedTargets` run under hedging (per-ticket realised P&L, balance, equity) and
+netting (balance, equity: equity equal, balance different); the restart property;
+held breaks (newest-first closing; hedging flip as one opposite order; long stop on
+the ask; gap filled at the stop; stop slippage dropped; re-entry after a stop-out;
+netting realising oldest first; round turn charged on the close, including the
+netting flip; store not reloaded on restart).
 
 ## RESUME HERE (session 2026-11-23)
 
@@ -91,11 +142,26 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
   rollover ending Wednesday or the one beginning it.
 - **Needs a live order:** whether the broker keeps the order `comment` field (§10 item 2).
 - FTMO trial logins expire, so the next extraction needs a new trial.
+- **Needs the FTMO trial before it expires (about 1 December): the partial-close swap
+  check** (position conventions, 2026-11-25). How MT5 books a ticket's accrued swap when
+  half the ticket is closed: proportionally on the closing deal, all of it on the closing
+  deal, or none until the last close. Steps handed to the operator 2026-11-25: XAGUSD,
+  0.10 lots long, held past one rollover, half closed with the position's own close
+  button (never a new sell order, which on a hedging account opens a short), the rest
+  closed, read with `read_deal_commissions.py`. Until answered, the ticket ledger splits
+  swap proportionally and says so.
+  **Predictions updated 2026-11-25 to the day's XAGUSD swap long of -11.45 points**
+  (operator): 0.10 lots x 11.45 x 0.001 x 5000 = 5.725 -> **-5.73 for a single night,
+  -17.18 for the Wednesday triple** (17.175). Half of the accrued swap, if MT5 splits it
+  proportionally (H1): about -2.86/-2.87 single, -8.59 triple, depending on whether it
+  halves the exact amount or the cents. H2: all of it on the half-close deal. H3: none
+  until the last close. The operator plans the check for the night of 2026-11-25.
 
 ## Next, in order
 
 1. ~~**Phase 3c**~~ — **complete 2026-11-25** (3c.0-3c.4; phase 3 exit met under 3c.4).
-2. **Position conventions:** netting and hedging, before phase 4. **NEXT.**
+2. **Position conventions:** netting and hedging, before phase 4. **IN PROGRESS** --
+   decisions 2026-11-25 in "POSITION CONVENTIONS" above.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
 

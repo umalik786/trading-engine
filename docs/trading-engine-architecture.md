@@ -1,7 +1,8 @@
 # Strategy-Agnostic Trading Engine — Architecture Specification
 
 **Status:** design document, pre-implementation
-**Version:** 3.11 — §2.8: `executable_price` is the quoted price adjusted for spread, used to value open positions; `fill_price` adds slippage, and puts the fill on the price grid rounded against the trader. Slippage never enters valuation, because the firm measures equity at quoted prices and phase 4's limits must use the same equity
+**Version:** 3.12 — position conventions (2026-11-25): netting and hedging behind one position book (new §2.10); `Order` names the ticket it closes and carries the stop the venue executes, `Fill` names its ticket and trigger (§2.1); the broker executes stops and reports its position mode (§2.7); `fees` knows the opening quantity, and the cost model prices stop fills and the loss per lot at a stop (§2.8); the sizer receives that loss (§2.5); the engine's persisted state (new §5.4); a build step between phases 3 and 4 (§9). Take-profit is refused until phase 6. (The 2026-11-23 amendments to §2.1 and §2.5, phase 3c.3, were dated in place without a version.)
+**Previous:** 3.11 — §2.8: `executable_price` is the quoted price adjusted for spread, used to value open positions; `fill_price` adds slippage, and puts the fill on the price grid rounded against the trader. Slippage never enters valuation, because the firm measures equity at quoted prices and phase 4's limits must use the same equity
 **Previous:** 3.10 — records verification results from 2026-11-17: §10 items 1, 3 and 4 answered; A.6 notes FTMO's non-genuine index history, `bars_genuine_from`, and `price_basis: bid` confirmed by `chart_mode`
 **Previous:** 3.9 — `CostModel.financing` takes an explicit half-open time window instead of a `Bar` (§2.8). A bar cannot express whether a rollover happened, because that depends on where time was before it
 **Previous:** 3.8 — `Bar` carries `spread` in price units (§2.1), and `CostModel` gains `executable_price` (§2.8) so that fills and position valuation derive from one side-aware rule rather than two. Both are additions to contracts §2 calls fixed
@@ -25,10 +26,10 @@ here, the citation is wrong — say so rather than working around it.
 
 **0.** Scope and non-goals
 **1.** Design principles — P1 one engine two wirings · P2 causality by construction · P3 strategy is a plugin · P4 risk has veto · P5 determinism · P6 costs are a model
-**2.** Component contracts — 2.1 core data types · 2.2 feed adapter · 2.3 feature pipeline · 2.4 strategy plugin · 2.5 position sizer · 2.6 risk gate · 2.7 broker adapter · 2.8 cost model · 2.9 decision log
+**2.** Component contracts — 2.1 core data types · 2.2 feed adapter · 2.3 feature pipeline · 2.4 strategy plugin · 2.5 position sizer · 2.6 risk gate · 2.7 broker adapter · 2.8 cost model · 2.9 decision log · 2.10 position book
 **3.** Repository structure
 **4.** The two wirings
-**5.** State, restart and reconciliation — 5.1 what is authoritative · 5.2 order idempotency · 5.3 startup reconciliation
+**5.** State, restart and reconciliation — 5.1 what is authoritative · 5.2 order idempotency · 5.3 startup reconciliation · 5.4 persisted engine state
 **6.** Risk layer specification — 6.1 structure · 6.2 on threshold values · 6.3 risk state persistence · 6.4 intervention rules · 6.5 external account constraints (6.5.1 principle · 6.5.2 required capabilities · 6.5.3 configuration · 6.5.4 deriving the internal margin · 6.5.5 persisted state · 6.5.6 rule provenance · 6.5.7 interaction with 6.4 · 6.5.8 exit criteria · 6.5.9 note on simulated venues)
 **7.** Validation strategy — 7.1 reference strategies · 7.2 parity harness · 7.3 property tests, hand-written · 7.4 golden replays
 **8.** Walk-forward validation
@@ -129,8 +130,8 @@ class TargetPosition:
     # both or neither (amended 2026-11-23, phase 3c.3)
     quantity: Optional[Decimal]  # signed lots; negative = short; 0 = flat
     weight: Optional[Decimal]  # signed fraction of equity; the sizer converts it
-    stop_price: Optional[Decimal]
-    take_profit: Optional[Decimal]
+    stop_price: Optional[Decimal]  # attached to the position; the VENUE executes it (§2.7)
+    take_profit: Optional[Decimal] # REFUSED until phase 6 (v3.12); then the stop-first rule
     reason: str                # human-readable; logged with every decision
     confidence: Optional[Decimal]  # 0-1, used by sizer if strategy provides it
 
@@ -142,8 +143,12 @@ class Order:
     quantity: Decimal
     order_type: Literal["market", "limit", "stop"]
     limit_price: Optional[Decimal]
-    stop_price: Optional[Decimal]
+    stop_price: Optional[Decimal]  # trigger of a stop ENTRY order; not a stop loss
     intent_id: str         # links back to the TargetPosition that produced it
+    closes_ticket: Optional[str]   # v3.12. None: opens (or, netting, trades the net
+                                   # position). A ticket: reduces exactly that position
+    stop_loss: Optional[Decimal]   # v3.12. Attached to the position this order opens;
+                                   # executed by the venue, not by the engine
 
 @dataclass(frozen=True)
 class Fill:
@@ -154,7 +159,11 @@ class Fill:
     price: Decimal
     fees: Decimal
     ts: datetime
+    ticket: str                    # v3.12. The position opened, added to or reduced
+    trigger: Literal["order", "stop_loss"]  # v3.12. A stop-out is a venue fill
 ```
+
+*Amended 2026-11-25 (position conventions, v3.12).* On a hedging account a sell that names no ticket does not reduce a long: it opens a short beside it. So a reduction must say which position it reduces (`closes_ticket`), and a fill must say which position it touched (`ticket`). Under netting there is one position per symbol and its ticket is the symbol's. `stop_loss` is separate from `stop_price` because they are different things: one triggers an entry, the other protects a position and is executed by the venue. The engine refuses a target with a `take_profit` until phase 6, where it is expected to be needed and will be built with the pessimistic rule (a bar touching both: the stop first).
 
 ### 2.2 Feed adapter
 
@@ -228,6 +237,8 @@ class SizingContext:
     bar: Bar                       # the DECIDING bar; the fill bar does not exist yet
     committed: Decimal             # signed: held plus ordered-but-not-filled
     spec: Optional[InstrumentSpec] # volume limits, contract size
+    loss_per_lot_at_stop: Optional[Decimal]  # v3.12. Money lost per lot if the target's
+                                   # stop is hit, costs included (§2.8); None without a stop
 
 class Sizer(Protocol):
     def size(
@@ -241,6 +252,8 @@ class Sizer(Protocol):
 ```
 
 *Amended 2026-11-23 (phase 3c.3):* `context` added. A sizer needs the price it sizes from (the deciding bar's close), what is already committed (counting only held lots re-sizes an order in flight — the phase 2 double-ordering bug), and the instrument's volume limits. The rules of the first real sizer, `EquitySizer`, are recorded in `docs/state.md` under 3c.3.
+
+*Amended 2026-11-25 (position conventions, v3.12):* `loss_per_lot_at_stop` added. Sizing a stop by the raw distance |close − stop| understates the loss at the stop by the entry spread, the slippage on both fills and both commissions. The engine asks the cost model for the whole loss per lot on the deciding bar (§2.8), and the sizer divides the risk budget by it. A gap through the stop cannot be bounded, so every stopped position logs its **overrun** (actual loss minus budget). Rebalancing (§2.10) replaces the 3c.3 hold rule's blind spot: a changed target is re-sized.
 
 Separated from the strategy so you can vary sizing (fixed fractional, volatility-scaled, Kelly-capped, confidence-weighted) without touching signal logic — and A/B one against another on the same signals.
 
@@ -267,14 +280,26 @@ class Broker(Protocol):
     def cancel(self, order_ref: BrokerOrderRef) -> None: ...
 
     def positions(self) -> list[Position]:
-        """Ground truth. The engine trusts this over its own memory."""
+        """Ground truth. The engine trusts this over its own memory.
+        v3.12: one entry per TICKET, with its open time, open price, lots,
+        stop loss and accrued swap."""
 
     def account(self) -> AccountState: ...
 
     def is_market_open(self, symbol: str) -> bool: ...
+
+    def modify_stop(self, ticket: str, stop_loss: Decimal) -> None:
+        """v3.12. Move the stop loss of one open position."""
+
+    @property
+    def position_mode(self) -> Literal["netting", "hedging"]:
+        """v3.12. What the account actually does. Checked against the venue
+        configuration at startup; a mismatch halts."""
 ```
 
 `SimBroker` implements this against the `CostModel`; `LiveBroker` implements it against a real API. The engine cannot tell them apart.
+
+*Amended 2026-11-25 (position conventions, v3.12).* **The broker executes stops.** A stop loss is attached to the position when it opens (`Order.stop_loss`) and lives at the venue, as it does on MT5's server; the engine never watches prices to close a position itself. `SimBroker` executes it each bar after that bar's fills, at the price `CostModel.stop_fill_price` gives (§2.8), and reports it as a fill with `trigger="stop_loss"`. The same strategy, sizer and position book therefore run unchanged in both wirings. `SimBroker` behaves as the configured position mode does: on a hedging simulation an opposite order that names no ticket opens an opposite position, exactly as MT5 would, so an engine that forgets to name tickets shows up as a broken invariant (§2.10) rather than being netted for it.
 
 ### 2.8 Cost model
 
@@ -307,7 +332,30 @@ class CostModel(Protocol):
         trader, and only here. The result is put on the instrument's price
         grid, rounded against the trader -- up for a buy, down for a sell."""
 
-    def fees(self, order: Order, fill_price: Decimal) -> Decimal: ...
+    def fees(self, order: Order, fill_price: Decimal, opening_quantity: Decimal) -> Decimal:
+        """v3.12: `opening_quantity` is the unsigned part of the fill that
+        opens or adds (the rest closes). Per-side and percentage commission
+        charge every lot; `per_lot_round_turn` charges the opening part only,
+        so a close pays nothing and a netting flip pays the round turn on
+        its opening part alone."""
+
+    def stop_fill_price(
+        self, held: Literal["long", "short"], bar: Bar, stop: Decimal
+    ) -> Optional[Decimal]:
+        """v3.12. None if `bar` does not reach the stop. A long's stop is
+        reached when the bid's low <= stop, a short's when the ask's high
+        >= stop (MT5 triggers on bid and ask respectively). The fill is the
+        stop, or the bar's open if the bar opens beyond it (a gap), then
+        slippage against the trader and the price grid rounded against the
+        trader. The gap rule is UNVERIFIED against the venue (docs/state.md)."""
+
+    def loss_per_lot_at_stop(
+        self, direction: Literal["long", "short"], bar: Bar, stop: Decimal
+    ) -> Decimal:
+        """v3.12. Money lost by one lot entered at `bar`'s close and stopped
+        at `stop`, estimated on `bar`: the entry fill (spread, slippage, grid)
+        and the stop fill priced by the same rules as `fill_price` and
+        `stop_fill_price`, plus both commissions. Used by the sizer (§2.5)."""
 
     def financing(
         self, position: Position, window_start: datetime, window_end: datetime
@@ -356,6 +404,37 @@ Two properties matter. **Rejections are logged as fully as executions** — the 
 
 The difference between a log that says `sell 0.5 XAUUSD @ 2043.20` and one carrying the above is the difference between a system you can interrogate and one you can only watch.
 
+### 2.10 Position book
+
+*Added 2026-11-25 (position conventions, v3.12).* The account's position mode is **venue configuration** (`config/venue_<name>.yaml`, `position_mode`), never an engine assumption. Both candidate venues are hedging (`margin_mode` 2, verified 2026-09-29); netting is built as well, for venue independence and because the cross-convention property (§7.3) needs both.
+
+```python
+class PositionBook(Protocol):
+    def net_quantity(self, symbol: str) -> Decimal:
+        """Signed lots held in `symbol`. What strategies, sizer and target
+        logic see, under either mode."""
+
+    def plan(self, symbol: str, target_quantity: Decimal, ...) -> list[Order]:
+        """The orders that move the held quantity to the target."""
+```
+
+| | Netting | Hedging |
+|---|---|---|
+| Positions per symbol | one; average cost | one per opening fill (a **ticket**); its own open price, stop and swap |
+| Increase | one order for the difference | a new ticket |
+| Reduction | one order for the difference | closing orders naming tickets, **oldest first**, the last one partly |
+| To flat | one order | close every ticket |
+| Flip | one order through zero | close every ticket, then open the new direction: two orders, closes first |
+| Realised P&L | average cost (one bounded division on partial closes) | per ticket: (close − open) × lots × contract size, no division |
+
+**Invariants.** The engine never holds both directions in one symbol, under either mode; the ledger asserts it and a breach halts. Under both modes equity and total P&L are identical for any sequence of targets; only the realised/unrealised split differs (average cost against oldest-first), so a limit anchored to balance (§6.5) depends on the mode.
+
+**Swap on a partly closed ticket** is split in proportion to the lots closed until the venue check in `docs/state.md` (Blocked) says how MT5 books it. That split is a division, bounded as the netting cost-basis one is: the remainder is defined by subtraction, so equity is exact.
+
+**Rebalancing.** A target identical to the one that sized the position (same weight, same stop) is held; a changed target is re-sized from current equity and the difference planned as above. A quantity target always plans the difference.
+
+**Stops.** A stop belongs to the symbol's target: a changed stop moves every open ticket's stop (`Broker.modify_stop`). A stop-out **consumes** its target: an identical target afterwards sizes to zero with a `stopped_out` note, and a changed target re-enters.
+
 ---
 
 ## 3. Repository structure
@@ -366,6 +445,7 @@ engine/
     types.py            # Bar, Order, Fill, TargetPosition, ...
     engine.py           # THE orchestrator. Used by backtest and live alike.
     portfolio.py        # PortfolioView, position accounting
+    positions.py        # v3.12: PositionBook, netting and hedging (§2.10)
     clock.py            # ReplayClock | WallClock
   feeds/
     base.py             # Feed protocol
@@ -394,7 +474,7 @@ engine/
     <provider>.py
   costs/
   persistence/
-    state_store.py      # append-only event log + snapshot
+    state_store.py      # append-only event log + snapshot; engine state of §5.4
     reconcile.py        # §5.3
   validation/
     walkforward.py      # §8
@@ -405,6 +485,7 @@ engine/
     dashboard.py
 config/
   base.yaml
+  venue_<name>.yaml     # v3.12: position mode, with provenance (§2.10)
   strategies/<name>.yaml
 tests/
   unit/
@@ -454,7 +535,7 @@ If a change ever needs to be made to the middle four arguments for live trading,
 
 ### 5.1 What is authoritative
 
-The **broker** is authoritative for positions and account equity. The **local state store** is authoritative for risk state (daily P&L accumulator, breaker status, lock files) and for the audit log. In-memory state is authoritative for nothing.
+The **broker** is authoritative for positions and account equity. The **local state store** is authoritative for risk state (daily P&L accumulator, breaker status, lock files), for the audit log, and (v3.12) for the engine state of §5.4. In-memory state is authoritative for nothing.
 
 ### 5.2 Order idempotency
 
@@ -472,6 +553,20 @@ Before the first bar is processed, in order:
 6. Only then enter the main loop.
 
 This routine is absent from the reference framework and is the most likely cause of a real-money incident.
+
+### 5.4 Persisted engine state
+
+*Added 2026-11-25 (position conventions, v3.12).* What the engine must record itself, because the broker cannot give it back. Written on every change, not on shutdown, and used by the backtest wiring too, so that a mid-run restart (§7.3) is testable before any live adapter exists.
+
+| Persisted | Why |
+|---|---|
+| **Intent log**, written BEFORE submitting: intent id, client order id, symbol, side, lots, open or close of which ticket, status (pending, submitted, confirmed, rejected), the broker's order, deal and position ids | A.5: no reliable caller-supplied id on MT5; after a crash, intents are matched to deals |
+| **The target that sized each symbol** (weight, stop) | Rebalancing (§2.10) compares a new target with it; losing it would re-size on restart |
+| **Stopped-out targets** | Losing them would re-enter a consumed target on restart |
+| **Ticket → intent links** | Which decision opened which position: audit, decision log |
+| **`last_reconciled_ts`** and the **deal ledger** (each deal's commission, swap and profit as reported) | A.4 reconciliation |
+
+**Not persisted**, because the broker returns them: positions, open prices, accrued swap, marks. **The close order** is derived, not stored: oldest first by the tickets' open times, the ticket number breaking ties. Risk state is §6.3 and §6.5.5 (phase 4).
 
 ---
 
@@ -662,6 +757,8 @@ Because any strategy can be plugged in, plug in strategies whose correct behavio
 | `AlwaysLong` | Matches buy-and-hold minus modelled costs, within tolerance | Accounting errors, cost double-counting, missed bars |
 | `AlwaysShort` | Mirror of buy-and-hold minus modelled costs | Sell-side accounting, sign errors, direction-dependent cost bugs |
 | `AlwaysFlat` | Exactly zero P&L, zero orders | Phantom trades, state leakage |
+| `ConstantWeights` (2026-11-23, phase 3c.4) | Each leg's buy- or sell-and-hold at the size the sizer gives it, minus costs | One instrument's costs, table row, swap or contract size applied to another; sizing from shared equity |
+| `ScriptedTargets` (v3.12; built for the position-conventions exit) | A fixed schedule of targets: entry, increase, partial close, flip, stop-outs, each computable by hand | Close order, ticket accounting, flips, stop fills, re-entry after a stop-out |
 | `PerfectForesight` (peeks at next bar — test only) | Enormous, near-monotonic returns | If it *doesn't* win big, the engine is broken |
 | `RandomEntry` (seeded) | Distribution centred slightly below zero after costs | Gives you the null distribution |
 
@@ -680,6 +777,8 @@ Written by you, not generated from the same spec that generated the implementati
 - Realised position never exceeds the risk gate's stated maximum, for any random input sequence.
 - Shuffling the *future* portion of a dataset never changes decisions already made (the strongest look-ahead test available).
 - The engine never submits an order when `is_market_open` is False.
+- (v3.12) For any sequence of targets and prices, netting and hedging give identical equity and total P&L; only the realised/unrealised split may differ. Neither ever holds both directions in a symbol.
+- (v3.12) No intent id is ever reused, closes of tickets included.
 
 ### 7.4 Golden replays
 
@@ -711,6 +810,7 @@ Each phase has an exit criterion. Do not start the next phase until the current 
 | 1 | Feed protocol, ReplayFeed, streaming feature pipeline | Property test §7.3 (future-shuffle) passes |
 | 2 | Strategy protocol, `AlwaysLong` / `AlwaysFlat`, portfolio accounting, SimBroker with ZeroCostModel | `AlwaysLong` matches buy-and-hold to the cent |
 | 3 | Cost model, sizer | `AlwaysLong` matches buy-and-hold minus a cost figure you can derive by hand |
+| 3–4 (v3.12) | Position conventions: netting and hedging (§2.10), rebalancing, stop execution, persisted engine state (§5.4) | Cross-convention property test (§7.3) passes; `ScriptedTargets` matches hand figures under both modes; a mid-run restart reproduces an uninterrupted run |
 | 4 | Risk gate, circuit breakers, **external account constraints (§6.5)** | Property tests: limits never breached under randomised adversarial input; §6.5.8 exit criteria pass |
 | 5 | Walk-forward engine and metrics, `RandomEntry` baseline | Random-entry distribution generated and plotted |
 | 6 | Your first real strategy | Clears the random baseline at a percentile you specify *before* looking |
@@ -739,6 +839,7 @@ Phases 2 and 3 look trivial and are the most valuable in the whole build. If `Al
 | Language | Python | Assumed throughout; architecture does not require it |
 | Tenancy | Single user | §0 non-goals |
 | Regime model | Deferred | It's a `FeatureSet`; don't build one before a strategy needs it |
+| Position mode (v3.12) | **Venue configuration**; both candidate venues are **hedging** (verified 2026-09-29); netting also built | §2.10. The engine never holds both directions; hedging closes oldest first; the adapter checks the mode at startup |
 
 **On multi-instrument.** Indices, FX and metals in one portfolio means correlated exposure is real, not theoretical — gold and silver move together, and both trade against the dollar alongside EUR/USD. The `RiskGate` correlation check (§6.1) is therefore load-bearing rather than nice-to-have. Compute rolling correlation from the feature pipeline and cap aggregate exposure across correlated groups, not just per instrument.
 
@@ -890,9 +991,13 @@ Use the durable-intent-log fallback from §5.2: write the intent with a unique `
 
 Note the mitigating property from §5.2: because the architecture is target-position based, a duplicate fill self-corrects on the next bar. It costs the spread twice; it does not leave silent double-size.
 
+*v3.12:* on a hedging account a reduction is an order that names the position it closes (`order_send` with `position` set to the ticket, from `Order.closes_ticket`), never an opposite order on its own, which would open a second position. Stops are set on the position (`sl`) and moved with an SL/TP modify request (`Broker.modify_stop`).
+
 ### A.6 Broker-specific configuration
 
 Symbol names vary by broker (`XAUUSD`, `XAUUSD.m`, `GOLD`). Contract size, volume step, minimum volume, digits, margin requirement and swap rates all come from `symbol_info()` at startup, and every order is validated against them before submission. All of this lives in adapter configuration and never leaks into strategy code.
+
+**Position mode is venue configuration (v3.12).** `config/venue_<name>.yaml` records `position_mode` with its provenance; FTMO and FundedNext are both hedging (`account_info().margin_mode` = 2, read 2026-09-29 with `check_margin_mode.py`). The adapter reads `margin_mode` at startup and halts if it disagrees with the configuration. See §2.10.
 
 **Historical depth is a per-broker unknown.** MT5 serves history from the broker's server, and depth varies from months to years. Verify before committing (§10).
 

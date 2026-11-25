@@ -2034,6 +2034,20 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
   its quarter, is equally causal and more faithful. Design it in phase 5, not now. The
   3c.2 cutoff refusal already allows it: each quarter's bars are costed by a table
   whose cutoff is at or before that quarter's start.
+- **Swap robustness** (operator, 2026-11-25). Swaps change often and sometimes change
+  sign (NAS100 short: +20.6 on 2026-11-17, -140.21 on 2026-11-25), so a result must
+  show how much it depends on them:
+  - **Every backtest report shows financing as a share of gross P&L.**
+  - **A swap sensitivity run:** all swaps scaled by a multiplier (1x, 1.5x, 2x, 3x, ...),
+    reporting the **break-even multiplier** at which the strategy stops clearing its
+    bar; plus **one run with every positive swap (credit) set to zero.**
+  - Judged against the dated swap history below ("Swap history").
+
+## Phase 6 notes
+
+- **The minimum acceptable break-even swap multiplier is part of the pass criteria**
+  the operator fixes before looking at results (operator, 2026-11-25), alongside the
+  random-baseline percentile of spec §9.
 
 ## Swap history (all five instruments, dated)
 

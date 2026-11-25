@@ -49,6 +49,17 @@ unaffected; only the split between realised and unrealised can differ in
 the last digits. A first-in-first-out cost basis would remove even that,
 at the cost of changing what "average price" means.
 
+TICKETS (spec v3.12, §2.10; phase PC.1). Positions are keyed by ticket.
+Under NETTING there is one position per symbol, its ticket is the symbol,
+and everything above applies unchanged: average cost, one bounded division
+on a partial close, a flip through zero in one fill. Under HEDGING every
+opening fill is its own ticket with its own open price, a closing fill
+names the ticket it reduces, and P&L is realised against that ticket's own
+price -- no averaging at all. The ledger never holds both directions in a
+symbol, under either mode (`BothDirectionsError`). Equity is identical
+under both modes for any sequence of fills; only the split between
+realised and unrealised differs.
+
 INVARIANT. A position only ever comes into existence through
 `apply_fill()`, and `apply_fill()` records that fill's price as the
 symbol's mark. So an open position always has a mark price, and
@@ -66,7 +77,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from engine.core.types import Fill, require_decimal, require_utc
+from engine.core.types import Fill, PositionMode, require_decimal, require_utc
+
+
+class BothDirectionsError(RuntimeError):
+    """The ledger was asked to hold a long and a short in one symbol at once
+    (spec v3.12, §2.10). The engine never does that under either mode, so it
+    halts: on a hedging account it means an order that should have named
+    the ticket it closes opened an opposite position instead."""
 
 
 @dataclass(frozen=True)
@@ -121,6 +139,10 @@ class Position:
     """
 
     symbol: str
+    # Spec v3.12. Which position this is. Under hedging, one per opening fill
+    # (the broker's ticket); under netting there is one per symbol and its
+    # ticket is the symbol.
+    ticket: str
     quantity: Decimal
     cost: Decimal
     # When the position was first opened, from the fill that opened it.
@@ -175,12 +197,24 @@ class PortfolioView(Protocol):
         mark price."""
         ...
 
+    @property
+    def position_mode(self) -> PositionMode:
+        """How the account holds positions (spec v3.12, §2.10)."""
+        ...
+
     def position_quantity(self, symbol: str) -> Decimal:
-        """Signed lots currently open in `symbol`; zero if flat."""
+        """Signed lots currently open in `symbol`, summed over its tickets;
+        zero if flat."""
         ...
 
     def positions(self) -> Mapping[str, Position]:
-        """Every open position, keyed by symbol. Flat symbols are absent."""
+        """Every open position, keyed by TICKET (v3.12). Under netting the
+        ticket is the symbol, so this is keyed by symbol as before."""
+        ...
+
+    def tickets(self, symbol: str) -> list[Position]:
+        """`symbol`'s open positions in close order: oldest first by open
+        time, the ticket number breaking ties (§2.10, §5.4). Empty if flat."""
         ...
 
 
@@ -192,7 +226,16 @@ class Portfolio:
     same instance serves a backtest and a live run.
     """
 
-    def __init__(self, starting_balance: Decimal, contract_sizes: Mapping[str, Decimal]) -> None:
+    def __init__(
+        self,
+        starting_balance: Decimal,
+        contract_sizes: Mapping[str, Decimal],
+        *,
+        position_mode: PositionMode,
+    ) -> None:
+        if position_mode not in ("netting", "hedging"):
+            raise ValueError(f"position_mode must be 'netting' or 'hedging', got {position_mode!r}")
+        self._position_mode: PositionMode = position_mode
         require_decimal("starting_balance", starting_balance)
         for symbol, contract_size in contract_sizes.items():
             require_decimal(f"contract_sizes[{symbol!r}]", contract_size)
@@ -204,6 +247,20 @@ class Portfolio:
         # The same realised P&L, split by symbol (3c.4: the per-instrument
         # breakdown). Every amount booked goes to both, in _realise.
         self._realised_by_symbol: dict[str, Decimal] = {}
+
+    @property
+    def position_mode(self) -> PositionMode:
+        return self._position_mode
+
+    def tickets(self, symbol: str) -> list[Position]:
+        """`symbol`'s open positions, oldest first by open time, the ticket
+        number breaking ties -- the order a hedging reduction closes them
+        in (§2.10). Compared as NUMBERS: as text, "10" sorts before "9".
+        Under netting there is at most one, so there is nothing to order."""
+        held = [p for p in self._positions.values() if p.symbol == symbol]
+        if self._position_mode == "netting":
+            return held
+        return sorted(held, key=lambda p: (p.opened_at, int(p.ticket)))
 
     @property
     def starting_balance(self) -> Decimal:
@@ -225,7 +282,8 @@ class Portfolio:
     @property
     def unrealised_pnl(self) -> Decimal:
         """P&L of open positions at their last mark price."""
-        return sum((self.unrealised_pnl_for(symbol) for symbol in self._positions), Decimal(0))
+        symbols = dict.fromkeys(p.symbol for p in self._positions.values())
+        return sum((self.unrealised_pnl_for(symbol) for symbol in symbols), Decimal(0))
 
     def realised_pnl_for(self, symbol: str) -> Decimal:
         """The part of `realised_pnl` booked against `symbol`: its closed
@@ -234,10 +292,12 @@ class Portfolio:
 
     def unrealised_pnl_for(self, symbol: str) -> Decimal:
         """The part of `unrealised_pnl` belonging to `symbol`'s open
-        position, at its last mark. Zero if flat."""
-        position = self._positions.get(symbol)
-        if position is None:
-            return Decimal(0)
+        positions -- every ticket -- at its last mark. Zero if flat."""
+        return sum((self._unrealised(position) for position in self.tickets(symbol)), Decimal(0))
+
+    def _unrealised(self, position: Position) -> Decimal:
+        """One position's open P&L at its symbol's last mark."""
+        symbol = position.symbol
         exit_price = self._marks[symbol].for_quantity(position.quantity)
         value_now = position.quantity * exit_price
         # Accrued financing sits in unrealised, so equity moves the moment
@@ -251,8 +311,7 @@ class Portfolio:
         )
 
     def position_quantity(self, symbol: str) -> Decimal:
-        position = self._positions.get(symbol)
-        return position.quantity if position is not None else Decimal(0)
+        return sum((p.quantity for p in self.tickets(symbol)), Decimal(0))
 
     def positions(self) -> Mapping[str, Position]:
         return dict(self._positions)
@@ -300,6 +359,14 @@ class Portfolio:
 
         Fees are subtracted from realised P&L in all three cases.
         """
+        if self._position_mode == "hedging":
+            self._apply_hedging_fill(fill)
+            return
+        if fill.ticket != fill.symbol:
+            raise ValueError(
+                f"under netting there is one position per symbol and its ticket is the "
+                f"symbol; a {fill.symbol} fill named ticket {fill.ticket!r}"
+            )
         contract_size = self._contract_size(fill.symbol)
         existing = self._positions.get(fill.symbol)
         old_quantity = existing.quantity if existing is not None else Decimal(0)
@@ -361,19 +428,102 @@ class Portfolio:
         else:
             self._positions[fill.symbol] = Position(
                 symbol=fill.symbol,
+                ticket=fill.symbol,
                 quantity=new_quantity,
                 cost=new_cost,
                 opened_at=opened_at,
                 financing_accrued=new_accrued,
             )
 
+    def _apply_hedging_fill(self, fill: Fill) -> None:
+        """One fill under hedging (spec v3.12, §2.10).
+
+        A fill naming a ticket that is not open OPENS it, at this fill's
+        price and time. A fill naming an open ticket must REDUCE it -- the
+        opposite direction, no more lots than it holds -- and realises
+        against that ticket's own open price. Every refusal is checked
+        before anything changes, so a refused fill leaves the book exactly
+        as it was.
+
+        No averaging, and the only division is the bounded one on a partial
+        close: a ticket has one open price, so its cost is lots x price and
+        cost x closed / lots is that price times the closed lots, exact. The
+        accrued swap is split in the same proportion until the venue check
+        in docs/state.md (Blocked) says how MT5 books it; the remainder is
+        defined by subtraction, so equity is exact either way.
+        """
+        contract_size = self._contract_size(fill.symbol)
+        existing = self._positions.get(fill.ticket)
+        if existing is None:
+            opposite = [
+                p.ticket
+                for p in self.tickets(fill.symbol)
+                if (p.quantity > 0) != (fill.quantity > 0)
+            ]
+            if opposite:
+                raise BothDirectionsError(
+                    f"{fill.symbol}: a {fill.quantity} fill would open ticket {fill.ticket} "
+                    f"against open ticket(s) {opposite} in the other direction. The engine "
+                    "never holds both directions in a symbol; on a hedging account this means "
+                    "an order that should have named the ticket it closes did not"
+                )
+            self._positions[fill.ticket] = Position(
+                symbol=fill.symbol,
+                ticket=fill.ticket,
+                quantity=fill.quantity,
+                cost=fill.quantity * fill.price,
+                opened_at=fill.ts,
+            )
+        else:
+            if existing.symbol != fill.symbol:
+                raise ValueError(
+                    f"ticket {fill.ticket} is a {existing.symbol} position; a {fill.symbol} "
+                    "fill cannot touch it"
+                )
+            if (existing.quantity > 0) == (fill.quantity > 0):
+                raise ValueError(
+                    f"{fill.symbol}: a {fill.quantity} fill named open ticket {fill.ticket} "
+                    f"({existing.quantity} lots) in its own direction. Under hedging an add "
+                    "is a new ticket, so the broker and the ledger disagree"
+                )
+            closed_lots = abs(fill.quantity)
+            if closed_lots > abs(existing.quantity):
+                raise ValueError(
+                    f"{fill.symbol}: a {fill.quantity} fill would close more than ticket "
+                    f"{fill.ticket} holds ({existing.quantity} lots)"
+                )
+            if closed_lots == abs(existing.quantity):
+                cost_removed = existing.cost
+                accrued_released = existing.financing_accrued
+            else:
+                cost_removed = existing.cost * closed_lots / abs(existing.quantity)
+                accrued_released = existing.financing_accrued * closed_lots / abs(existing.quantity)
+            direction = Decimal(1) if existing.quantity > 0 else Decimal(-1)
+            proceeds = direction * closed_lots * fill.price
+            self._realise(fill.symbol, (proceeds - cost_removed) * contract_size)
+            self._realise(fill.symbol, accrued_released)
+            remaining = existing.quantity + fill.quantity
+            if remaining == 0:
+                del self._positions[fill.ticket]
+            else:
+                self._positions[fill.ticket] = replace(
+                    existing,
+                    quantity=remaining,
+                    cost=existing.cost - cost_removed,
+                    financing_accrued=existing.financing_accrued - accrued_released,
+                )
+        self._realise(fill.symbol, -fill.fees)
+        # Provisional mark, as under netting: see apply_fill.
+        self._marks[fill.symbol] = ExitPrices.unadjusted(fill.price)
+
     def _realise(self, symbol: str, amount: Decimal) -> None:
         """Book `amount` to realised P&L, in total and against `symbol`."""
         self._realised_pnl += amount
         self._realised_by_symbol[symbol] = self.realised_pnl_for(symbol) + amount
 
-    def accrue_financing(self, symbol: str, amount: Decimal) -> None:
-        """Add overnight financing to an open position, signed.
+    def accrue_financing(self, ticket: str, amount: Decimal) -> None:
+        """Add overnight financing to one open position, signed. `ticket`
+        names the position (v3.12); under netting it is the symbol.
 
         Negative is charged to the account, positive is paid to it. It
         lands on the position, so it moves equity at once and balance only
@@ -384,14 +534,14 @@ class Portfolio:
         discarding it would hide a rollover being charged to nothing.
         """
         require_decimal("amount", amount)
-        position = self._positions.get(symbol)
+        position = self._positions.get(ticket)
         if position is None:
             raise KeyError(
-                f"cannot accrue financing on {symbol!r}: no open position. A rollover "
+                f"cannot accrue financing on {ticket!r}: no open position. A rollover "
                 "charged against a flat book means the caller's idea of what was held "
                 "disagrees with the ledger's"
             )
-        self._positions[symbol] = replace(
+        self._positions[ticket] = replace(
             position, financing_accrued=position.financing_accrued + amount
         )
 

@@ -97,6 +97,7 @@ def test_always_long_matches_buy_and_hold(case: Case) -> None:
     result = run_backtest(
         bars,
         AlwaysLong(symbol=case.symbol, quantity=case.lots),
+        position_mode="hedging",
         contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
     )
 

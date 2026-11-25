@@ -81,6 +81,7 @@ from harness import (
 )
 
 from engine.core.instruments import load_contract_sizes, load_instrument_specs
+from engine.core.venue import load_venue_config
 from engine.costs.configured import ConfiguredCostModel, build_server_clock
 from engine.costs.correction_table import load_correction_table
 from engine.costs.profile import load_cost_profile
@@ -91,6 +92,8 @@ from engine.strategies.reference.constant_weights import ConstantWeights
 ORDER = ("EURUSD", "NAS100", "XAGUSD")  # same-timestamp processing order
 SPAN = "2026-08-25T2100_2026-08-31T0100"
 PROFILE = REPO_ROOT / "config" / "cost_ftmo_demo.yaml"
+# The venue's position mode (PC.1): FTMO is hedging; read, not assumed.
+VENUE_FILE = REPO_ROOT / "config" / "venue_ftmo_demo.yaml"
 TABLE = FIXTURE_DIR / "spread_correction_ftmo_fit_until_2025-01-01.json"
 SIZING = FIXTURE_DIR / "sizing_test.yaml"
 STARTING_BALANCE = Decimal("100000.00")
@@ -175,6 +178,7 @@ def _run(sign: int, sizer=None):
     return run_backtest(
         merge_bars(_series(), order=ORDER),
         ConstantWeights(dict.fromkeys(ORDER, sign * WEIGHT)),
+        position_mode=load_venue_config(VENUE_FILE).position_mode,
         contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
         starting_balance=STARTING_BALANCE,
         cost_model=_model(),

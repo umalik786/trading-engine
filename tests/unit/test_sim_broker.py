@@ -13,9 +13,9 @@ from decimal import Decimal
 import pytest
 
 from engine.brokers.base import BrokerOrderRef
-from engine.brokers.sim import SimBroker
-from engine.core.portfolio import ExitPrices, Portfolio
-from engine.core.types import Bar, Order
+from engine.brokers.sim import SimBroker, SimRejectionError
+from engine.core.portfolio import BothDirectionsError, ExitPrices, Portfolio
+from engine.core.types import Bar, Order, PositionMode
 from engine.costs.zero import ZeroCostModel
 
 SYMBOL = "XAUUSD"
@@ -23,9 +23,14 @@ CONTRACT_SIZES = {SYMBOL: Decimal(100), "EURUSD": Decimal(100000)}
 _BAR_WIDTH = timedelta(minutes=15)
 
 
-def _broker() -> tuple[SimBroker, Portfolio]:
-    portfolio = Portfolio(starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES)
-    return SimBroker(cost_model=ZeroCostModel(), portfolio=portfolio), portfolio
+def _broker(mode: PositionMode = "netting") -> tuple[SimBroker, Portfolio]:
+    portfolio = Portfolio(
+        starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES, position_mode=mode
+    )
+    return (
+        SimBroker(cost_model=ZeroCostModel(), portfolio=portfolio, position_mode=mode),
+        portfolio,
+    )
 
 
 def _bar(ts_open: datetime, open_price: str, close_price: str, symbol: str = SYMBOL) -> Bar:
@@ -227,3 +232,150 @@ class TestBrokerProtocolSurface:
     def test_market_is_open_whenever_a_bar_exists(self, symbol: str) -> None:
         broker, _ = _broker()
         assert broker.is_market_open(symbol) is True
+
+
+# --- position modes (spec v3.12, §2.7 and §2.10; phase PC.1) -----------------
+
+
+def _mode_order(
+    side: str,
+    quantity: str,
+    n: int,
+    *,
+    closes: str | None = None,
+    stop_loss: Decimal | None = None,
+) -> Order:
+    return Order(
+        client_order_id=f"mode-{n}",
+        symbol=SYMBOL,
+        side=side,  # type: ignore[arg-type]
+        quantity=Decimal(quantity),
+        order_type="market",
+        limit_price=None,
+        stop_price=None,
+        intent_id=f"mode-intent-{n}",
+        closes_ticket=closes,
+        stop_loss=stop_loss,
+    )
+
+
+_T0 = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
+
+
+def _next_bar(k: int) -> Bar:
+    return _bar(_T0 + k * _BAR_WIDTH, "2000.00", "2000.00")
+
+
+class TestHedgingSimBroker:
+    """SimBroker behaves as a hedging account does (§2.7): every opening
+    fill is a new ticket, a close names its ticket, and an opposite order
+    that names none opens an opposite position -- which the ledger refuses
+    to hold."""
+
+    def test_opening_orders_get_new_tickets_in_sequence(self) -> None:
+        broker, portfolio = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.30", 0))
+        broker.submit(_mode_order("buy", "0.20", 1))
+        fills = broker.fill_pending(_next_bar(1))
+
+        assert [f.ticket for f in fills] == ["1", "2"]
+        assert [t.ticket for t in portfolio.tickets(SYMBOL)] == ["1", "2"]
+
+    def test_ticket_numbers_are_never_reused(self) -> None:
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.10", 0))
+        broker.fill_pending(_next_bar(1))
+        broker.submit(_mode_order("sell", "0.10", 1, closes="1"))
+        broker.fill_pending(_next_bar(2))
+        broker.submit(_mode_order("buy", "0.10", 2))
+
+        assert [f.ticket for f in broker.fill_pending(_next_bar(3))] == ["2"]
+
+    def test_a_close_fills_against_the_ticket_it_names(self) -> None:
+        broker, portfolio = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.30", 0))
+        broker.submit(_mode_order("buy", "0.20", 1))
+        broker.fill_pending(_next_bar(1))
+        broker.submit(_mode_order("sell", "0.20", 2, closes="2"))
+        (fill,) = broker.fill_pending(_next_bar(2))
+
+        assert fill.ticket == "2"
+        assert fill.quantity == Decimal("-0.20")
+        assert [t.ticket for t in portfolio.tickets(SYMBOL)] == ["1"]
+
+    def test_an_opposite_order_naming_no_ticket_is_caught_by_the_ledger(self) -> None:
+        """Exactly what MT5 would do with it -- open a short beside the
+        long -- so an engine that forgets to name tickets shows up as a
+        broken invariant rather than being netted for it."""
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.10", 0))
+        broker.fill_pending(_next_bar(1))
+        broker.submit(_mode_order("sell", "0.10", 1))
+
+        with pytest.raises(BothDirectionsError):
+            broker.fill_pending(_next_bar(2))
+
+    def test_closing_a_ticket_that_is_not_open_is_rejected(self) -> None:
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("sell", "0.10", 0, closes="7"))
+        with pytest.raises(SimRejectionError, match="not open"):
+            broker.fill_pending(_next_bar(1))
+
+    def test_a_close_in_the_tickets_own_direction_is_rejected(self) -> None:
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.10", 0))
+        broker.fill_pending(_next_bar(1))
+        broker.submit(_mode_order("buy", "0.10", 1, closes="1"))
+        with pytest.raises(SimRejectionError, match="direction"):
+            broker.fill_pending(_next_bar(2))
+
+    def test_closing_more_than_the_ticket_holds_is_rejected(self) -> None:
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.10", 0))
+        broker.fill_pending(_next_bar(1))
+        broker.submit(_mode_order("sell", "0.20", 1, closes="1"))
+        with pytest.raises(SimRejectionError, match="holds"):
+            broker.fill_pending(_next_bar(2))
+
+    def test_positions_lists_every_ticket(self) -> None:
+        broker, _ = _broker("hedging")
+        broker.submit(_mode_order("buy", "0.30", 0))
+        broker.submit(_mode_order("buy", "0.20", 1))
+        broker.fill_pending(_next_bar(1))
+
+        assert sorted(p.ticket for p in broker.positions()) == ["1", "2"]
+
+
+class TestNettingSimBroker:
+    def test_a_netting_fill_names_the_symbol_as_its_ticket(self) -> None:
+        broker, _ = _broker("netting")
+        broker.submit(_mode_order("buy", "0.10", 0))
+        (fill,) = broker.fill_pending(_next_bar(1))
+        assert fill.ticket == SYMBOL
+
+    def test_an_order_naming_a_ticket_is_refused_under_netting(self) -> None:
+        broker, _ = _broker("netting")
+        broker.submit(_mode_order("sell", "0.10", 0, closes="1"))
+        with pytest.raises(SimRejectionError, match="netting"):
+            broker.fill_pending(_next_bar(1))
+
+
+class TestBrokerMode:
+    @pytest.mark.parametrize("mode", ["netting", "hedging"])
+    def test_the_broker_reports_its_mode(self, mode: PositionMode) -> None:
+        broker, _ = _broker(mode)
+        assert broker.position_mode == mode
+
+    def test_a_broker_and_ledger_in_different_modes_are_refused(self) -> None:
+        portfolio = Portfolio(
+            starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES, position_mode="netting"
+        )
+        with pytest.raises(ValueError, match="position mode"):
+            SimBroker(cost_model=ZeroCostModel(), portfolio=portfolio, position_mode="hedging")
+
+    def test_an_order_carrying_a_stop_loss_is_refused_until_stops_are_built(self) -> None:
+        """Stop execution is PC.3. Accepting the field and ignoring it would
+        run straight through the stop."""
+        broker, _ = _broker("hedging")
+        with pytest.raises(NotImplementedError, match=r"PC.3"):
+            broker.submit(_mode_order("buy", "0.10", 0, stop_loss=Decimal("1990.00")))

@@ -54,6 +54,7 @@ def test_always_flat_places_no_orders() -> None:
     result = run_backtest(
         _bars(),
         AlwaysFlat(symbol=SYMBOL),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
         starting_balance=STARTING_BALANCE,
     )
@@ -66,6 +67,7 @@ def test_always_flat_earns_and_loses_nothing() -> None:
     result = run_backtest(
         _bars(),
         AlwaysFlat(symbol=SYMBOL),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
         starting_balance=STARTING_BALANCE,
     )
@@ -83,12 +85,14 @@ def test_two_runs_of_always_flat_do_not_share_state() -> None:
     first = run_backtest(
         _bars(),
         AlwaysFlat(symbol=SYMBOL),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
         starting_balance=STARTING_BALANCE,
     )
     second = run_backtest(
         _bars(),
         AlwaysFlat(symbol=SYMBOL),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
         starting_balance=STARTING_BALANCE,
     )

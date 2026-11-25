@@ -36,8 +36,12 @@ WHAT ONE BAR DOES, in order
   6. ask the strategy for its target positions
   7. pass each target through the sizer, with the deciding bar, the
      committed quantity (held plus ordered) and the instrument spec
-  8. turn any difference between the sized target and actual into one
-     market order, queued for the next bar
+  8. ask the position book (PC.1, spec §2.10) for the orders that move
+     held-plus-pending lots to the sized target, under the run's position
+     mode, and queue them for the next bar. Netting: one order for the
+     difference. Hedging: a new ticket for an increase; closes naming
+     tickets, oldest first, for a reduction; closes then an opening order
+     for a flip
 
 THE DECIDING BAR IS PER SYMBOL (phase 3c.3, operator 2026-11-23). A target
 is sized from the latest bar of ITS OWN symbol, whichever symbol's bar is
@@ -91,7 +95,8 @@ from pathlib import Path
 from engine.brokers.sim import SimBroker
 from engine.core.instruments import InstrumentSpec
 from engine.core.portfolio import ExitPrices, Portfolio, PortfolioView
-from engine.core.types import Bar, Fill, Order, TargetPosition
+from engine.core.positions import PositionBook
+from engine.core.types import Bar, Fill, Order, PositionMode
 from engine.costs.base import CostModel
 from engine.costs.zero import ZeroCostModel
 from engine.features.technical import TechnicalFeatureSet
@@ -188,6 +193,7 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
     bars: Sequence[Bar],
     strategy: Strategy,
     *,
+    position_mode: PositionMode,
     contract_sizes: Mapping[str, Decimal],
     starting_balance: Decimal = Decimal(0),
     cost_model: CostModel | None = None,
@@ -212,8 +218,13 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
             )
 
     costs = cost_model or ZeroCostModel()
-    portfolio = Portfolio(starting_balance=starting_balance, contract_sizes=contract_sizes)
-    broker = SimBroker(cost_model=costs, portfolio=portfolio)
+    portfolio = Portfolio(
+        starting_balance=starting_balance,
+        contract_sizes=contract_sizes,
+        position_mode=position_mode,
+    )
+    broker = SimBroker(cost_model=costs, portfolio=portfolio, position_mode=position_mode)
+    book = PositionBook(portfolio, position_mode)
     features = TechnicalFeatureSet([])
     sizing = sizer or FixedQuantitySizer()
     strategy_name = type(strategy).__name__
@@ -269,17 +280,17 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
                 stops[target.symbol] = target.stop_price
             else:
                 stops.pop(target.symbol, None)
-            order = _order_for_target(
-                target,
-                portfolio,
-                sized_quantity=sized,
+            # The sized quantity, not the target's own, is what the engine aims
+            # for: the sizer alone decides how big a position is. Pending
+            # orders count as held (see `_committed`).
+            for order in book.plan(
+                target.symbol,
+                sized,
                 pending_orders=broker.pending_orders(),
-                identifier=_client_order_id(strategy_name, target.symbol, bar, intent_index),
-            )
-            if order is None:
-                continue
-            broker.submit(order)
-            orders.append(order)
+                intent_id=_client_order_id(strategy_name, target.symbol, bar, intent_index),
+            ):
+                broker.submit(order)
+                orders.append(order)
 
     never_seen = sorted({note.symbol for note in waits} - set(latest_bar))
     if never_seen:
@@ -315,7 +326,17 @@ def run_backtest(  # noqa: PLR0913 -- one wiring argument per component, by desi
 
 
 def _committed(portfolio: PortfolioView, pending_orders: Sequence[Order], symbol: str) -> Decimal:
-    """Held plus ordered-but-not-filled, signed. See `_order_for_target`."""
+    """Held plus ordered-but-not-filled, signed.
+
+    LOTS ORDERED AND NOT FILLED ARE AS COMMITTED AS LOTS HELD. Counting only
+    filled lots looks correct with one instrument -- each bar fills the
+    previous bar's order before the strategy is asked again -- and breaks
+    the moment two instruments interleave: a bar for one symbol cannot fill
+    the other's pending order, the book looks flat while the order is in
+    flight, and the whole position is ordered a second time under a new
+    `client_order_id`, which §5.2 idempotency does not stop. The position
+    book (`PositionBook.plan`) counts pending orders the same way.
+    """
     return portfolio.position_quantity(symbol) + _net_pending_quantity(pending_orders, symbol)
 
 
@@ -339,59 +360,6 @@ def _refuse_a_reached_stop(
         )
 
 
-def _order_for_target(
-    target: TargetPosition,
-    portfolio: PortfolioView,
-    *,
-    sized_quantity: Decimal,
-    pending_orders: Sequence[Order],
-    identifier: str,
-) -> Order | None:
-    """Turn a target position into the one market order that closes the gap
-    between target and actual -- or into nothing at all.
-
-    This is what makes target-position semantics work. `AlwaysLong` returns
-    the same target on every bar of a run; on the first it differs from a
-    flat book by the full size, and on all the others the difference is
-    zero and no order exists. One order for the whole run, with no
-    "am I already in?" test inside the strategy.
-
-    "WHERE THE ENGINE ALREADY IS" INCLUDES ORDERS NOT YET FILLED. Lots
-    that have been ordered and not filled are as committed as lots that
-    have, so they count against the target exactly the same. Counting only
-    filled lots looks correct with one instrument -- each bar fills the
-    previous bar's order before the strategy is asked again -- and breaks
-    the moment two instruments interleave, because a bar for one symbol
-    cannot fill the other's pending order. The strategy is then asked
-    while the order is in flight, the book looks flat, and the whole
-    position is ordered a second time under a new `client_order_id`, which
-    is a new intent rather than a retry, so §5.2 idempotency does not stop
-    it. Both fill, and the position is double the size anyone asked for.
-
-    `intent_id` carries the same text as `client_order_id` here because
-    one intent produces at most one order. They separate in phase 3, when
-    a sizer can turn a single intent into several.
-    """
-    committed = _committed(portfolio, pending_orders, target.symbol)
-    # The sized quantity, not the target's own, is what the engine aims
-    # for -- the sizer is the only thing entitled to decide how big a
-    # position is. `FixedQuantitySizer` returns the target unchanged,
-    # which is why the reference strategies behave identically either way.
-    delta = sized_quantity - committed
-    if delta == 0:
-        return None
-    return Order(
-        client_order_id=identifier,
-        symbol=target.symbol,
-        side="buy" if delta > 0 else "sell",
-        quantity=abs(delta),
-        order_type="market",
-        limit_price=None,
-        stop_price=None,
-        intent_id=identifier,
-    )
-
-
 def _accrue_financing(
     portfolio: Portfolio,
     costs: CostModel,
@@ -407,12 +375,12 @@ def _accrue_financing(
     or triple days -- all of that is behind the `CostModel` seam, where a
     bug in it cannot reach a run using `ZeroCostModel`.
     """
-    position = portfolio.positions().get(symbol)
-    if position is None:
-        return
-    amount = costs.financing(position, window_start, window_end)
-    if amount != 0:
-        portfolio.accrue_financing(symbol, amount)
+    # One charge per position (ticket), as MT5 charges swap: under hedging a
+    # symbol can hold several, each with its own open time and lots.
+    for position in portfolio.tickets(symbol):
+        amount = costs.financing(position, window_start, window_end)
+        if amount != 0:
+            portfolio.accrue_financing(position.ticket, amount)
 
 
 def _client_order_id(strategy_name: str, symbol: str, bar: Bar, intent_index: int) -> str:

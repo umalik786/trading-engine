@@ -1,0 +1,17 @@
+# FTMO venue facts the engine's behaviour depends on (spec v3.12, §2.10).
+#
+# position_mode decides how a reduction is ordered: under hedging each
+# opening fill is its own position (a ticket) and a reduction must name the
+# ticket it closes; under netting there is one position per symbol. It is
+# configuration because it is a fact about the account, read from the
+# account, and changing venue must be a config edit.
+#
+# VERIFIED 2026-09-29: account_info().margin_mode = 2 (retail hedging), read
+# on FTMO-Demo (FTMO Global Markets Ltd) with check_margin_mode.py. Record:
+# docs/state.md, "FTMO position mode: HEDGING". Support chat said the same;
+# that is supporting evidence only -- the account's own report is the source.
+venue:
+  venue: ftmo_demo
+  position_mode: hedging
+  position_mode_verified: "2026-09-29"
+  position_mode_source: "account_info().margin_mode = 2 on FTMO-Demo, read with check_margin_mode.py (docs/state.md)"

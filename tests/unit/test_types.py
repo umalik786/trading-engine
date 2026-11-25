@@ -35,6 +35,7 @@ def _fill(**overrides: object) -> Fill:
         "price": Decimal("1.1005"),
         "fees": Decimal("0.50"),
         "ts": datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+        "ticket": "EURUSD",
     }
     defaults.update(overrides)
     return Fill(**defaults)
@@ -253,3 +254,61 @@ class TestFill:
         fill = _fill()
         with pytest.raises(FrozenInstanceError):
             fill.price = Decimal("2")
+
+
+class TestPositionConventionFields:
+    """Spec v3.12, §2.1: an order names the ticket it closes and carries the
+    stop the venue executes; a fill names its ticket and what triggered it."""
+
+    def _order(self, **overrides: object) -> Order:
+        fields = {
+            "client_order_id": "c1",
+            "symbol": "EURUSD",
+            "side": "sell",
+            "quantity": Decimal("0.5"),
+            "order_type": "market",
+            "limit_price": None,
+            "stop_price": None,
+            "intent_id": "i1",
+        }
+        fields.update(overrides)
+        return Order(**fields)  # type: ignore[arg-type]
+
+    def test_an_order_opens_by_default_and_carries_no_stop_loss(self) -> None:
+        order = self._order()
+        assert order.closes_ticket is None
+        assert order.stop_loss is None
+
+    def test_an_order_can_name_the_ticket_it_closes(self) -> None:
+        assert self._order(closes_ticket="7").closes_ticket == "7"
+
+    def test_a_float_stop_loss_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="stop_loss must be a Decimal"):
+            self._order(stop_loss=1.09)
+
+    def test_a_fill_needs_a_ticket(self) -> None:
+        fields = {
+            "order_id": "o1",
+            "client_order_id": "c1",
+            "symbol": "EURUSD",
+            "quantity": Decimal("1"),
+            "price": Decimal("1.1"),
+            "fees": Decimal(0),
+            "ts": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+        with pytest.raises(TypeError, match="ticket"):
+            Fill(**fields)  # type: ignore[call-arg]
+
+    def test_an_empty_ticket_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="no ticket"):
+            _fill(ticket="")
+
+    def test_a_fill_is_triggered_by_an_order_by_default(self) -> None:
+        assert _fill().trigger == "order"
+
+    def test_a_stop_loss_trigger_is_accepted(self) -> None:
+        assert _fill(trigger="stop_loss").trigger == "stop_loss"
+
+    def test_an_unknown_trigger_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="trigger"):
+            _fill(trigger="take_profit")

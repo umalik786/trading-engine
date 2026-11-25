@@ -24,6 +24,12 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
+# How the account holds positions (spec v3.12, §2.10). Venue configuration,
+# never an engine assumption: "netting" keeps one position per symbol;
+# "hedging" keeps one per opening fill (a ticket). Both candidate venues are
+# hedging (margin_mode 2, verified 2026-09-29).
+PositionMode = Literal["netting", "hedging"]
+
 
 def require_utc(field_name: str, value: datetime) -> None:
     if value.tzinfo is None:
@@ -111,9 +117,21 @@ class Order:
     limit_price: Decimal | None
     stop_price: Decimal | None
     intent_id: str  # links back to the TargetPosition that produced it
+    # Spec v3.12 (position conventions). None: the order opens a position
+    # (or, under netting, trades the net position). A ticket: the order
+    # reduces exactly that position. On a hedging account an opposite order
+    # that names no ticket does not reduce anything -- it opens a second
+    # position in the other direction -- so a reduction must say which
+    # position it reduces.
+    closes_ticket: str | None = None
+    # Spec v3.12. The stop loss attached to the position this order opens,
+    # executed by the venue, never by the engine. Not `stop_price`, which is
+    # the trigger of a stop ENTRY order: one protects a position, the other
+    # opens one.
+    stop_loss: Decimal | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("quantity", "limit_price", "stop_price"):
+        for field_name in ("quantity", "limit_price", "stop_price", "stop_loss"):
             require_decimal(field_name, getattr(self, field_name))
 
 
@@ -126,8 +144,21 @@ class Fill:
     price: Decimal
     fees: Decimal
     ts: datetime
+    # Spec v3.12. The position this fill opened, added to or reduced. Under
+    # hedging every opening fill is a new ticket; under netting there is one
+    # position per symbol and its ticket is the symbol. No default: every
+    # fill touches some position, and a broker that did not say which would
+    # leave the ledger guessing.
+    ticket: str
+    # Spec v3.12. "stop_loss" when the venue closed the position at its stop
+    # (phase PC.3); the engine never sends that order itself.
+    trigger: Literal["order", "stop_loss"] = "order"
 
     def __post_init__(self) -> None:
         require_utc("ts", self.ts)
         for field_name in ("quantity", "price", "fees"):
             require_decimal(field_name, getattr(self, field_name))
+        if not self.ticket:
+            raise ValueError(f"a fill names the position it touched; {self.symbol} got no ticket")
+        if self.trigger not in ("order", "stop_loss"):
+            raise ValueError(f"trigger must be 'order' or 'stop_loss', got {self.trigger!r}")

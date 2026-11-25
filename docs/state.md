@@ -53,7 +53,8 @@ figures: **PC.0** spec amendments -> **PC.1** position book, ticket ledger, SimB
 per mode, order plans -> **PC.2** rebalancing, exact exit commission -> **PC.3** stop
 execution, risk distance, stop-out rules -> **PC.4** persistent store, restartable
 harness -> **PC.5** exit. **Status: PC.0 (spec v3.12) approved by the operator
-2026-11-25; PC.1 in progress.**
+2026-11-25. PC.1 approved and committed 2026-11-25** (record below, "PC.1").
+**PC.2 in progress.**
 
 1. **Position mode lives in a venue config file**, `config/venue_ftmo_demo.yaml`
    (`position_mode: hedging`, with provenance: `margin_mode` 2, 2026-09-29). Also the
@@ -96,6 +97,42 @@ held breaks (newest-first closing; hedging flip as one opposite order; long stop
 the ask; gap filled at the stop; stop slippage dropped; re-entry after a stop-out;
 netting realising oldest first; round turn charged on the close, including the
 netting flip; store not reloaded on restart).
+
+### PC.1 — position book, ticket ledger, SimBroker per mode (built 2026-11-25)
+
+- **Tests first, shown failing:** 92 red against stubs, every one for the right reason
+  (88 "not built yet", 4 refusals not yet made). The golden tests went red too, because
+  they now run under hedging; they returned to their exact earlier figures once it was
+  built (a single entry held to the end gives the same P&L under either mode).
+  668 passed after.
+- **Built:** `Order.closes_ticket`, `Order.stop_loss`, `Fill.ticket` (required),
+  `Fill.trigger`; `Position.ticket`; `Portfolio(position_mode=...)` keyed by ticket, with
+  `tickets(symbol)` oldest first (ticket NUMBER breaking ties) and `BothDirectionsError`;
+  `PositionBook.plan` (`core/positions.py`); `SimBroker(position_mode=...)` numbering
+  tickets 1, 2, 3... and refusing what MT5 refuses (`SimRejectionError`); an order with
+  a stop loss refused until PC.3; `config/venue_ftmo_demo.yaml` + `core/venue.py`;
+  the harness plans through the book and charges financing per ticket.
+- **One choice not in the spec, recorded in §5.2:** several orders from one intent share
+  its `intent_id`; `client_order_id` = intent id + `:n`.
+- **Refused rather than guessed (`PlanError`):** under hedging, a reduction that would
+  have to close lots whose opening order has not filled yet (no ticket to name).
+- **Breaks held** (operator: until the figures), predictions written before any run:
+  (B1) close newest first: 8 failures -- ledger tie-break test; book: reduction, small
+  reduction, to flat, flip, short book; wiring: hedging orders and hedging tickets; the
+  950.00 total still passes in both modes (equity does not depend on close order).
+  (B2) hedging flip as one opposite order: 4 -- book flip test; all three hedging wiring
+  tests, by `BothDirectionsError` at bar 4. (B4) closes that name no ticket: 9 -- six
+  book tests (reduction, small reduction, to flat, flip, short book, pending close) and
+  the three hedging wiring tests, by `BothDirectionsError`. No golden figure moves under
+  any of them: every phase 2/3 run enters once and holds. "Netting realising oldest
+  first" needs a FIFO ledger to break into; it stays in the PC.5 list.
+- **Note for PC.4 (operator, 2026-11-25): a restart reloads saved intents, it never
+  re-plans them.** A re-plan after a restart can split differently (the book has moved,
+  or a pending order has filled) and would then reuse an id such as `<intent>:1` for a
+  different order -- which §5.2 idempotency would treat as a retry of the old one. The
+  PC.4 restart test must include this case: an intent planned as several orders, the
+  run stopped between them, restarted, and the saved orders (ids, lots, tickets)
+  resubmitted unchanged rather than re-planned.
 
 ## RESUME HERE (session 2026-11-23)
 
@@ -186,6 +223,7 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
   proportionally (H1): about -2.86/-2.87 single, -8.59 triple, depending on whether it
   halves the exact amount or the cents. H2: all of it on the half-close deal. H3: none
   until the last close. The operator plans the check for the night of 2026-11-25.
+  **Position opened by the operator: 0.10 lots XAGUSD long, ticket 5920.**
 
 ## Next, in order
 
@@ -193,7 +231,10 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 2. **Position conventions:** netting and hedging, before phase 4. **IN PROGRESS** --
    decisions 2026-11-25 in "POSITION CONVENTIONS" above.
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
-   `bars_genuine_from` required.
+   `bars_genuine_from` required. **Also decide (operator, 2026-11-25): `PlanError`
+   when a target is restated on another symbol's bar while this symbol's opening order
+   is still pending** and the new target would close those unfilled lots. Today it halts
+   the run, which is safe; decide there whether to wait for the fill instead.
 
 Proposal (c), the FTMO swap config, was applied 2026-11-19 — see "Proposals from the
 session".

@@ -43,7 +43,9 @@ def _bar(index: int, close: str) -> Bar:
 
 
 def _portfolio() -> Portfolio:
-    return Portfolio(starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES)
+    return Portfolio(
+        starting_balance=Decimal(0), contract_sizes=CONTRACT_SIZES, position_mode="netting"
+    )
 
 
 class TestAlwaysLong:
@@ -73,6 +75,7 @@ class TestAlwaysLong:
                 price=Decimal("2000"),
                 fees=Decimal(0),
                 ts=datetime(2026, 1, 5, tzinfo=UTC),
+                ticket=SYMBOL,
             )
         )
 
@@ -138,6 +141,7 @@ class TestAlwaysShort:
                 price=Decimal("2000"),
                 fees=Decimal(0),
                 ts=datetime(2026, 1, 5, tzinfo=UTC),
+                ticket=SYMBOL,
             )
         )
 
@@ -288,6 +292,7 @@ class TestConstantWeights:
                 price=Decimal("2000"),
                 fees=Decimal(0),
                 ts=datetime(2026, 1, 5, tzinfo=UTC),
+                ticket=SYMBOL,
             )
         )
         assert strategy.on_bar(_bar(1, "2000"), {}, held) == flat

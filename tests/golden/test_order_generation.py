@@ -63,6 +63,7 @@ def test_a_pending_order_is_not_ordered_again_when_another_symbols_bar_intervene
     result = run_backtest(
         _interleaved_bars(),
         AlwaysLong(symbol="XAUUSD", quantity=Decimal(1)),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
     )
 
@@ -77,6 +78,7 @@ def test_the_resulting_position_is_the_size_that_was_asked_for() -> None:
     result = run_backtest(
         _interleaved_bars(),
         AlwaysLong(symbol="XAUUSD", quantity=Decimal(1)),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
     )
 
@@ -87,6 +89,7 @@ def test_nothing_is_left_queued_at_the_end_of_the_run() -> None:
     result = run_backtest(
         _interleaved_bars(),
         AlwaysLong(symbol="XAUUSD", quantity=Decimal(1)),
+        position_mode="hedging",
         contract_sizes=CONTRACT_SIZES,
     )
 

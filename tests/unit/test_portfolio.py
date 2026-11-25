@@ -25,7 +25,11 @@ _TS = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
 
 
 def _portfolio(starting_balance: str = "0") -> Portfolio:
-    return Portfolio(starting_balance=Decimal(starting_balance), contract_sizes=CONTRACT_SIZES)
+    return Portfolio(
+        starting_balance=Decimal(starting_balance),
+        contract_sizes=CONTRACT_SIZES,
+        position_mode="netting",
+    )
 
 
 def _exits(long_exit: str, short_exit: str) -> ExitPrices:
@@ -44,6 +48,7 @@ def _fill(quantity: str, price: str, symbol: str = "XAUUSD", fees: str = "0") ->
         price=Decimal(price),
         fees=Decimal(fees),
         ts=_TS,
+        ticket=symbol,
     )
 
 
@@ -207,11 +212,19 @@ class TestDecimalDiscipline:
 
     def test_float_starting_balance_is_rejected(self) -> None:
         with pytest.raises(TypeError, match="Decimal"):
-            Portfolio(starting_balance=100000.0, contract_sizes=CONTRACT_SIZES)  # type: ignore[arg-type]
+            Portfolio(
+                starting_balance=100000.0,  # type: ignore[arg-type]
+                contract_sizes=CONTRACT_SIZES,
+                position_mode="netting",
+            )
 
     def test_float_contract_size_is_rejected(self) -> None:
         with pytest.raises(TypeError, match="Decimal"):
-            Portfolio(starting_balance=Decimal(0), contract_sizes={"XAUUSD": 100.0})  # type: ignore[dict-item]
+            Portfolio(
+                starting_balance=Decimal(0),
+                contract_sizes={"XAUUSD": 100.0},  # type: ignore[dict-item]
+                position_mode="netting",
+            )
 
     def test_float_mark_price_is_rejected(self) -> None:
         portfolio = _portfolio()
@@ -276,7 +289,11 @@ class TestContractSizeConfiguration:
 class TestPositionType:
     def test_position_is_immutable(self) -> None:
         position = Position(
-            symbol="XAUUSD", quantity=Decimal(1), cost=Decimal("2000.00"), opened_at=_TS
+            symbol="XAUUSD",
+            ticket="XAUUSD",
+            quantity=Decimal(1),
+            cost=Decimal("2000.00"),
+            opened_at=_TS,
         )
         with pytest.raises(FrozenInstanceError):
             position.quantity = Decimal(2)
@@ -285,7 +302,11 @@ class TestPositionType:
         """Reading only -- this divides, and nothing in the accounting
         path goes through it."""
         position = Position(
-            symbol="XAUUSD", quantity=Decimal(3), cost=Decimal("6030.00"), opened_at=_TS
+            symbol="XAUUSD",
+            ticket="XAUUSD",
+            quantity=Decimal(3),
+            cost=Decimal("6030.00"),
+            opened_at=_TS,
         )
         assert position.avg_price == Decimal("2010.00")
 

@@ -82,6 +82,7 @@ def _run(bars, strategy, *, cost_model=None, balance="100000", sizer=None):
     return run_backtest(
         bars,
         strategy,
+        position_mode="hedging",
         contract_sizes=SIZES,
         instruments=SPECS,
         starting_balance=Decimal(balance),
@@ -201,6 +202,7 @@ def test_specs_that_disagree_with_the_contract_sizes_are_refused() -> None:
         run_backtest(
             [_bar(0)],
             AlwaysLong(GOLD, quantity=Decimal(1)),
+            position_mode="hedging",
             contract_sizes={GOLD: Decimal(1), SILVER: Decimal(5000)},
             instruments=SPECS,
         )

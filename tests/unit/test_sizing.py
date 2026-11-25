@@ -108,7 +108,9 @@ def _size(  # noqa: PLR0913 -- one keyword per input a test varies
 
 
 def _portfolio() -> Portfolio:
-    return Portfolio(starting_balance=Decimal(0), contract_sizes={SYMBOL: Decimal(100)})
+    return Portfolio(
+        starting_balance=Decimal(0), contract_sizes={SYMBOL: Decimal(100)}, position_mode="netting"
+    )
 
 
 class TestFixedQuantitySizer:

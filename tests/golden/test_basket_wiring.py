@@ -81,6 +81,7 @@ def _run(strategy, cost_model=None):
     return run_backtest(
         merge_bars(_series(), order=ORDER),
         strategy,
+        position_mode="hedging",
         contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
         starting_balance=Decimal("100000.00"),
         cost_model=cost_model,
@@ -114,6 +115,7 @@ class TestPnlBySymbol:
         result = run_backtest(
             _series()["EURUSD"],
             AlwaysFlat(symbol="EURUSD"),
+            position_mode="hedging",
             contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
         )
         assert result.pnl_by_symbol == {}

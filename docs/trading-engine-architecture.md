@@ -541,6 +541,8 @@ The **broker** is authoritative for positions and account equity. The **local st
 
 `client_order_id` is deterministic: `hash(strategy_name, symbol, bar.ts_close, intent_index)`. If the process dies after submitting but before recording the response, the retry on restart carries the same ID, and the broker rejects the duplicate. This turns the worst failure mode in automated trading — the accidental double position — into a no-op.
 
+*v3.12 (PC.1, 2026-11-25):* one intent can now produce several orders (closing two tickets, or a hedging flip, §2.10). They share the intent's `intent_id`; each order's `client_order_id` is that id followed by `:n`, n counting from 0 in plan order. Still deterministic, and no two orders share one.
+
 ### 5.3 Startup reconciliation
 
 Before the first bar is processed, in order:

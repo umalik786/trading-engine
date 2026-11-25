@@ -89,6 +89,7 @@ def test_always_short_matches_the_mirror_of_buy_and_hold(case: Case) -> None:
     result = run_backtest(
         bars,
         AlwaysShort(symbol=case.symbol, quantity=case.lots),
+        position_mode="hedging",
         contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
     )
 

@@ -91,6 +91,7 @@ def _run(direction: str):
     return run_backtest(
         bars,
         strategy,
+        position_mode="hedging",
         contract_sizes=load_contract_sizes(INSTRUMENTS_CONFIG),
         cost_model=ConfiguredCostModel(_profile(), load_instrument_specs(INSTRUMENTS_CONFIG)),
     )

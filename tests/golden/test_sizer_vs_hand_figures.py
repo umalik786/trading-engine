@@ -208,6 +208,7 @@ def _run(name: str):
     return run_backtest(
         load_bars_from_csv(FIXTURE_DIR / FIXTURE, SYMBOL),
         _strategy(name),
+        position_mode="hedging",
         contract_sizes={s: spec.contract_size for s, spec in specs.items()},
         instruments=specs,
         starting_balance=BALANCE,

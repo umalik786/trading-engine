@@ -76,6 +76,7 @@ def _model(
 def _position(quantity: str = "1", opened_at: datetime = OPENED_LONG_AGO) -> Position:
     return Position(
         symbol=SYMBOL,
+        ticket=SYMBOL,
         quantity=Decimal(quantity),
         cost=Decimal(quantity) * Decimal("2000.00"),
         opened_at=opened_at,
@@ -293,6 +294,7 @@ class TestShapes:
         model = _model()
         other = Position(
             symbol="EURUSD",
+            ticket="EURUSD",
             quantity=Decimal(1),
             cost=Decimal("1.1000"),
             opened_at=OPENED_LONG_AGO,

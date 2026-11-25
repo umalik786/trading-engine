@@ -16,6 +16,36 @@ exactly; all six held breaks moved exactly as predicted.** Record under 3c.4.
 **Next: position conventions (netting and hedging)** -- see below.
 The RESUME HERE list below is the 3c record, kept for reference.
 
+## Session readings, 2026-11-25 (FTMO-Demo trial, login 1515313288)
+
+- **Operator, XAGUSD Specification window:** swap long -11.45, short -2.3 points;
+  swap rates per day Monday 1, Tuesday 1, Wednesday 3, Thursday 1, Friday 1;
+  commission **"Instant by deal volume, in/out deals, 0.0007% in USD per lot"** -- the
+  platform itself stating half the symbols page's 0.0014% on each of the in and out
+  deals, **confirming "half per side" for silver from a third source** (venue page,
+  deal history, platform).
+- **`verify_mt5.py`, read only, saved as `C:\trading\data\mt5-verification-2026-11-25.json`**,
+  backed up to `G:\My Drive\trading-data-backup\2026-11-25` (that folder holds only this
+  file; SHA-256 91f5b513..., identical at both ends). The script now records every
+  `swap_*` field, including `swap_rollover3days` (the triple day was read by a separate
+  script on 2026-11-17). This MT5 build exposes no per-weekday multipliers, only the
+  triple weekday. **Every swap rate has changed since 2026-11-17; nothing else has**
+  (contract sizes, points, volume limits, `swap_mode` 1 = points, triple days):
+
+  | | long 11-17 | long 11-25 | short 11-17 | short 11-25 | triple |
+  |---|---|---|---|---|---|
+  | NAS100 | -684.39 | -497.35 | +20.6 | **-140.21** | Friday (5), unchanged |
+  | US500 | -175.75 | -159.72 | -4.04 | -13.18 | Friday (5), unchanged |
+  | EURUSD | -8.8 | -8.37 | +0.38 | +0.18 | Wednesday (3), unchanged |
+  | XAUUSD | -57.69 | -53.52 | -4.2 | -15.0 | Wednesday (3), unchanged |
+  | XAGUSD | -12.58 | -11.45 | -0.93 | -2.3 | Wednesday (3), unchanged |
+
+  NAS100's short swap has changed sign: a credit of 20.6 points a night is now a charge
+  of 140.21. **`config/cost_ftmo_demo.yaml` NOT changed (operator: report first).**
+  Updating it moves the 3c.4 golden test's pinned SHA-256, so that test needs a decision
+  at the same time (recompute the figures, or pin a frozen copy of the 2026-11-17
+  profile as a fixture).
+
 ## POSITION CONVENTIONS — decisions 2026-11-25 (operator), on the proposal of the same day
 
 Sub-steps, one at a time, tests first with stubs, breaks held until the operator's
@@ -2004,6 +2034,23 @@ Move = engine minus hand figure; each restored and SHA-256 verified.
   its quarter, is equally causal and more faithful. Design it in phase 5, not now. The
   3c.2 cutoff refusal already allows it: each quarter's bars are costed by a table
   whose cutoff is at or before that quarter's start.
+
+## Swap history (all five instruments, dated)
+
+**Standing practice (operator, 2026-11-25): whenever an FTMO account is available
+(about weekly), save all five swap readings with a date**, as the history the phase 5
+break-even multiplier is judged against. How: run `verify_mt5.py` (read only; it
+writes `C:\trading\data\mt5-verification-<date>.json` with every `swap_*` field and
+the triple weekday), back the file up to a new dated Drive folder and compare it at
+both ends, then add a row here. Points per lot per night, long / short.
+
+| Date | NAS100 | US500 | EURUSD | XAUUSD | XAGUSD | Triple days | File |
+|---|---|---|---|---|---|---|---|
+| 2026-11-17 | -684.39 / +20.6 | -175.75 / -4.04 | -8.8 / +0.38 | -57.69 / -4.2 | -12.58 / -0.93 | indices Fri, rest Wed | mt5-verification-2026-11-17.json |
+| 2026-11-25 | -497.35 / -140.21 | -159.72 / -13.18 | -8.37 / +0.18 | -53.52 / -15.0 | -11.45 / -2.3 | indices Fri, rest Wed | mt5-verification-2026-11-25.json |
+
+Earlier: a 2026-09-11 reading existed but its file was lost with the old laptop; only
+fragments survive in this file (e.g. XAGUSD short +0.5 then). Not used as history.
 
 ## Phase 7 notes
 

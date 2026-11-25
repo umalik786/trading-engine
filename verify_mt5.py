@@ -120,6 +120,10 @@ def describe_symbol(broker_name: str) -> dict:
         "swap_long": info.swap_long,
         "swap_short": info.swap_short,
         "swap_mode": info.swap_mode,
+        # Every swap_* field this build exposes, including swap_rollover3days
+        # (the triple weekday, 0 = Sunday ... 6 = Saturday). Added 2026-11-25 so
+        # the triple day is in the dated record, not read by a separate script.
+        **{k: v for k, v in info._asdict().items() if k.startswith("swap")},
         "filling_mode_raw": info.filling_mode,
         "filling_modes": decode_filling_mode(info.filling_mode),
         "spread_now_points": spread_points,
@@ -217,7 +221,8 @@ def main() -> None:
         print(f"  Contract size : {spec['contract_size']}")
         print(f"  Volume        : min {spec['volume_min']}, "
               f"step {spec['volume_step']}, max {spec['volume_max']}")
-        print(f"  Swap long/short: {spec['swap_long']} / {spec['swap_short']}")
+        print(f"  Swap long/short: {spec['swap_long']} / {spec['swap_short']}"
+              f"   triple weekday (0=Sun): {spec.get('swap_rollover3days')}")
         print(f"  Filling modes : {', '.join(spec['filling_modes'])}")
         print(f"  Spread now    : {spec['spread_now_points']} points")
 

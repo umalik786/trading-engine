@@ -1,11 +1,20 @@
 # Current State
 
-**Last session:** 2026-11-23 (3c.2 exit criterion met); before that 2026-11-20 (3c.2:
-tick sample, correction fitted and validated, wiring built)
-**Phase:** 3 in progress. 3a complete 2026-10-01; 3b complete 2026-10-02; 3c.0 and
-3c.1 complete 2026-11-19. **3c.2 (the spread correction) exit criterion met
-2026-11-23. 3c.3 (the sizer) complete 2026-11-23.**
+**Last session:** 2026-11-25 (3c.4 built, figures matched, breaks exact: **phase 3
+complete**); before that 2026-11-24 (FTMO commission verified and applied)
+**Phase: 3 COMPLETE 2026-11-25.** 3a complete 2026-10-01; 3b 2026-10-02; 3c.0 and
+3c.1 2026-11-19; 3c.2 and 3c.3 2026-11-23; **3c.4 (the phase 3 exit) 2026-11-25.**
+Next: position conventions, then orchestrator design, before phase 4.
 Phase 2 complete 2026-09-30.
+
+## PHASE 3 COMPLETE (2026-11-25)
+
+Exit run: the production cost profile and instruments file, a real fitted table
+(cutoff 2025-01-01), EquitySizer, three instruments in one run (EURUSD, NAS100,
+XAGUSD), long and short baskets. **All 14 operator figures matched the engine
+exactly; all six held breaks moved exactly as predicted.** Record under 3c.4.
+**Next: position conventions (netting and hedging)** -- see "Next, in order".
+The RESUME HERE list below is the 3c record, kept for reference.
 
 ## RESUME HERE (session 2026-11-23)
 
@@ -32,10 +41,8 @@ Phase 2 complete 2026-09-30.
    2026-11-25: identical** in every value of all five instruments.
 2. ~~Guard test and week search; basket strategy and per-instrument breakdown~~ —
    **done 2026-11-25** (tests first). Week: 2026-08-25 21:00 to 2026-08-31 01:00 UTC.
-3. Operator's inputs — **handed over 2026-11-25. NEXT: the operator's 14 figures**
-   (6 lot sizes, 6 leg P&Ls, 2 totals) into `CASES` in
-   `tests/golden/test_phase3_exit_vs_hand_figures.py`; then the six held breaks,
-   predictions written first.
+3. ~~Operator's inputs, figures, held breaks~~ — **done 2026-11-25: all 14 figures
+   matched; all six breaks exact. Phase 3 complete.**
 Then the rest of Next below.
 
 ## Data recovery (checked 2026-11-24)
@@ -87,12 +94,8 @@ Nothing blocks the next step. Waiting on the operator or on a live terminal:
 
 ## Next, in order
 
-1. **Phase 3c:** slippage, the statistical spread model of Appendix C.1, and a real sizer.
-   Plan and decisions approved 2026-11-19 ("Phase 3c plan and decisions"). **3c.0
-   complete 2026-11-19** (bar spread = minimum; spread-table method decided). **3c.1
-   complete 2026-11-19** (slippage; see "3c.1 slippage — COMPLETE"). **3c.2, the
-   statistical spread model, is in progress**: see "RESUME HERE" above.
-2. **Position conventions:** netting and hedging, before phase 4.
+1. ~~**Phase 3c**~~ — **complete 2026-11-25** (3c.0-3c.4; phase 3 exit met under 3c.4).
+2. **Position conventions:** netting and hedging, before phase 4. **NEXT.**
 3. **Orchestrator design** (`core/engine.py`), before phase 4. Includes making
    `bars_genuine_from` required.
 
@@ -1483,7 +1486,43 @@ deferred to 3c.2; the spread-table method is decided.
   minutes, bid/ask 1.09717/1.09718 — consistent with the history. The "steady 5 points"
   seen on 2026-11-17 is therefore not evidence of a markup; its cause is not known.
 
-### 3c.4 phase 3 exit — decisions 2026-11-23; built 2026-11-25, awaiting hand figures
+### 3c.4 phase 3 exit — COMPLETE 2026-11-25 (phase 3 complete)
+
+**Exit criterion — MET 2026-11-25.** Operator's hand figures, computed before the
+engine's were seen, entered in `CASES`; the engine matches every one exactly:
+
+| | EURUSD | NAS100 | XAGUSD | Total |
+|---|---|---|---|---|
+| Long lots | 0.85 | 3.41 | 0.29 | |
+| Long P&L | -793.475 | 137.151905 | -3845.9551876 | -4502.2782826 |
+| Short lots | -0.85 | -3.41 | -0.29 | |
+| Short P&L | 639.54 | -273.2433 | 3320.30937285 | 3686.60607285 |
+
+Operator's equity at the NAS100/XAGUSD sizing: long 99944.325, short 99929.875.
+
+**Breaks, 2026-11-25 -- every move predicted before running, every one exact.**
+Golden predictions came from an independent calculator (the written rules as
+plain arithmetic, no engine code) that first reproduced all 14 operator figures
+and both equities. Hardened harness: each anchor replaced exactly once, no
+bytecode, caches cleared before and after, full suite per break, SHA-256
+identical after every restore. "Another symbol" = the rotation EURUSD -> NAS100
+-> XAGUSD -> EURUSD.
+
+| Break | Long total | Short total | Failures |
+|---|---|---|---|
+| 1 correction row of another symbol | -4442.02150555 | 3715.76871045 | 2 (golden; first message EURUSD P&L) |
+| 2 swap settings of another symbol | -7231.5871776 | 3778.36770785 | 2 (golden; EURUSD P&L) |
+| 3 another instrument's contract size in sizing | NAS100 sized 0 | NAS100 sized 0 | 5 (golden "one order per symbol" x2; basket wiring x2; guard "EURUSD sized alike with NAS100's size") |
+| 4 balance instead of equity | -4501.8760776 | 3685.80477285 | 7 (golden NAS100 3.42 for 3.41 x2; guard AttributeError; L7 0.75; 3 sizing units) |
+| 5 percentage charge rounded to nearest | -4499.3782623 | 3689.5060627 | 4 (golden XAGUSD x2; 41 for 42; 0.41 for 0.42) |
+| 6 genuine zero treated as missing | unmoved | 3683.20607285 | 7 (golden short EURUSD 636.14; 4 cost-model and 2 wiring genuine-zero units) |
+
+Every leg of every break also matched its prediction (break 3's engine run: EURUSD
+50 lots, capped; XAGUSD 0.01; NAS100 0). Break 4 moves NAS100 only: XAGUSD's lots
+do not move in this week (recorded at the week search). Break 6 moves the short
+only, as designed. Both suites green from a clean cache afterwards.
+
+**Decisions and build** (2026-11-23 and 2026-11-25) follow.
 
 **Build, 2026-11-25** (operator's start instruction of the same day):
 - **Table:** `fit_spread_correction.py --fit-until 2025-01-01` (commit af2a154).

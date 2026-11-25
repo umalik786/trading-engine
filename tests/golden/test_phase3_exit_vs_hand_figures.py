@@ -120,7 +120,35 @@ class Case:
     total: Decimal | None = None
 
 
-CASES = [Case(direction="long"), Case(direction="short")]
+# The operator's hand figures, computed before the engine's were seen
+# (2026-11-25). For reference, the operator's equity at the NAS100/XAGUSD
+# sizing: long 99944.325, short 99929.875.
+CASES = [
+    Case(
+        direction="long",
+        lots={"EURUSD": Decimal("0.85"), "NAS100": Decimal("3.41"), "XAGUSD": Decimal("0.29")},
+        pnl={
+            "EURUSD": Decimal("-793.475"),
+            "NAS100": Decimal("137.151905"),
+            "XAGUSD": Decimal("-3845.9551876"),
+        },
+        total=Decimal("-4502.2782826"),
+    ),
+    Case(
+        direction="short",
+        lots={
+            "EURUSD": Decimal("-0.85"),
+            "NAS100": Decimal("-3.41"),
+            "XAGUSD": Decimal("-0.29"),
+        },
+        pnl={
+            "EURUSD": Decimal("639.54"),
+            "NAS100": Decimal("-273.2433"),
+            "XAGUSD": Decimal("3320.30937285"),
+        },
+        total=Decimal("3686.60607285"),
+    ),
+]
 
 
 def _profile():
